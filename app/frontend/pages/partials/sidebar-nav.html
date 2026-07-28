@@ -1,0 +1,143 @@
+<nav class="sidebar-nav">
+
+        <!-- 홈 -->
+        <a href="../index.html?view=home" class="nav-item nav-home" data-view="home">
+          <i class="fa-solid fa-house"></i><span>홈</span>
+        </a>
+
+        <!-- Enterprise 전용 메뉴 (뱃지 클릭 시 안내 모달) -->
+        <a class="nav-item js-enterprise-gate" href="javascript:void(0)">
+          <i class="fa-solid fa-robot"></i><span>에이전트</span>
+        </a>
+        <a class="nav-item js-enterprise-gate" href="javascript:void(0)">
+          <i class="fa-solid fa-newspaper"></i><span>증시뉴스</span>
+        </a>
+
+        <!-- ─────── AI 분석 ─────── -->
+        <div class="nav-section">
+          <button class="nav-section-hdr" onclick="toggleNav('aitools')">
+            <span><i class="fa-solid fa-robot"></i>AI 분석</span>
+            <i class="fa-solid fa-chevron-down nav-chev" id="chev-aitools"></i>
+          </button>
+          <div class="nav-children" id="nav-aitools">
+            <div class="nav-group-label">DART 재무 분석</div>
+            <a href="../index.html?view=dart-financial-analysis" class="nav-item" data-view="dart-financial-analysis"><i class="fa-solid fa-magnifying-glass-dollar"></i>DART 재무 AI 분석</a>
+            <a href="../index.html?view=dart-company-search" class="nav-item" data-view="dart-company-search"><i class="fa-solid fa-magnifying-glass-chart"></i>DART 기업 검색</a>
+            <div class="nav-group-label">세무·회계</div>
+            <a href="../index.html?view=tax-accounting" class="nav-item" data-view="tax-accounting"><i class="fa-solid fa-file-invoice-dollar"></i>세무·회계 시뮬레이션</a>
+            <div class="nav-group-label">로컬 AI 엔진</div>
+            <a href="../index.html?view=ollama" class="nav-item" data-view="ollama"><i class="fa-solid fa-microchip"></i>Ollama AI 엔진 관리</a>
+          </div>
+        </div>
+
+        <!-- ─────── 학습 ─────── -->
+        <div class="nav-section">
+          <button class="nav-section-hdr" onclick="toggleNav('learn')">
+            <span><i class="fa-solid fa-book-open-reader"></i>학습</span>
+            <i class="fa-solid fa-chevron-down nav-chev" id="chev-learn"></i>
+          </button>
+          <div class="nav-children" id="nav-learn">
+            <a href="../index.html?view=learn-01" class="nav-item" data-view="learn-01"><i class="fa-solid fa-circle-dot"></i>Day 1 · 개인·법인·세무·회계 기초 상식</a>
+            <a href="../index.html?view=learn-02" class="nav-item" data-view="learn-02"><i class="fa-solid fa-circle-dot"></i>Day 2 · 경제지표 분석 (물가, 유가 등)</a>
+            <a href="../index.html?view=learn-03" class="nav-item" data-view="learn-03"><i class="fa-solid fa-circle-dot"></i>Day 3 · 거시경제 상황 분석 실습</a>
+            <a href="../index.html?view=learn-04" class="nav-item" data-view="learn-04"><i class="fa-solid fa-circle-dot"></i>Day 4 · 산업 분석</a>
+            <a href="../index.html?view=learn-05" class="nav-item" data-view="learn-05"><i class="fa-solid fa-circle-dot"></i>Day 5 · 산업 분석 실습</a>
+            <a href="../index.html?view=learn-06" class="nav-item" data-view="learn-06"><i class="fa-solid fa-circle-dot"></i>Day 6 · 재무제표 분석 I (손익계산서 &amp; 대차대조표)</a>
+            <a href="../index.html?view=learn-07" class="nav-item" data-view="learn-07"><i class="fa-solid fa-circle-dot"></i>Day 7 · 재무제표 분석 II (현금흐름표 &amp; 기업가치)</a>
+            <a href="../index.html?view=learn-08" class="nav-item" data-view="learn-08"><i class="fa-solid fa-circle-dot"></i>Day 8 · 상대가치 평가 (밸류에이션 멀티플)</a>
+            <a href="../index.html?view=learn-09" class="nav-item" data-view="learn-09"><i class="fa-solid fa-circle-dot"></i>Day 9 · 기술적 분석 I (추세 &amp; 지표)</a>
+            <a href="../index.html?view=learn-10" class="nav-item" data-view="learn-10"><i class="fa-solid fa-circle-dot"></i>Day 10 · 기술적 분석 II (패턴 &amp; 엘리어트 파동)</a>
+            <a href="../index.html?view=learn-11" class="nav-item" data-view="learn-11"><i class="fa-solid fa-circle-dot"></i>Day 11 · 주식·배당·금융상품 기초 상식</a>
+            <a href="../index.html?view=learn-12" class="nav-item" data-view="learn-12"><i class="fa-solid fa-circle-dot"></i>Day 12 · 모듈 8 도입 — 금융상품의 구분 (자본시장법 기준)</a>
+            <a href="../index.html?view=learn-13" class="nav-item" data-view="learn-13"><i class="fa-solid fa-circle-dot"></i>Day 13 · ETF 심화 (일반펀드 vs ETF 비교)</a>
+            <a href="../index.html?view=learn-14" class="nav-item" data-view="learn-14"><i class="fa-solid fa-circle-dot"></i>Day 14 · 포트폴리오 이론 및 성과 분석</a>
+            <a href="../index.html?view=learn-15" class="nav-item" data-view="learn-15"><i class="fa-solid fa-circle-dot"></i>Day 15 · 자산배분 모델</a>
+            <a href="../index.html?view=learn-16" class="nav-item" data-view="learn-16"><i class="fa-solid fa-circle-dot"></i>Day 16 · 우리나라 주식 시장의 외국인 매수·매도 및 자본 국적 확인 방법</a>
+            <a href="../index.html?view=learn-voca" class="nav-item" data-view="learn-voca"><i class="fa-solid fa-spell-check"></i>핵심 용어집</a>
+          </div>
+        </div>
+
+        <!-- ─────── 실습 ─────── -->
+        <div class="nav-section">
+          <button class="nav-section-hdr" onclick="toggleNav('practice')">
+            <span><i class="fa-solid fa-laptop-code"></i>실습</span>
+            <i class="fa-solid fa-chevron-down nav-chev" id="chev-practice"></i>
+          </button>
+          <div class="nav-children" id="nav-practice">
+            <div class="nav-group-label">매크로 분석</div>
+            <a href="../index.html?view=macro-realtime" class="nav-item" data-view="macro-realtime"><i class="fa-solid fa-satellite-dish"></i>거시경제현황 (실시간)</a>
+            <a href="../index.html?view=macro-simulation" class="nav-item" data-view="macro-simulation"><i class="fa-solid fa-chart-area"></i>거시경제 시뮬레이션</a>
+            <a href="../index.html?view=kospi-excluded" class="nav-item" data-view="kospi-excluded"><i class="fa-solid fa-filter-circle-xmark"></i>KOSPI 제외 지수</a>
+
+            <div class="nav-group-label">산업적 분석</div>
+            <a href="../index.html?view=industry-analysis" class="nav-item" data-view="industry-analysis"><i class="fa-solid fa-industry"></i>산업 경쟁력 분석</a>
+
+            <div class="nav-group-label">기본적 분석</div>
+            <a href="../index.html?view=dart-financial-analysis" class="nav-item" data-view="dart-financial-analysis"><i class="fa-solid fa-magnifying-glass-dollar"></i>DART 재무 AI 분석</a>
+            <a href="../index.html?view=dart-company-search" class="nav-item" data-view="dart-company-search"><i class="fa-solid fa-magnifying-glass-chart"></i>DART 기업 검색</a>
+            <a href="../index.html?view=dart-region-search" class="nav-item" data-view="dart-region-search"><i class="fa-solid fa-location-dot"></i>DART 지역·종사자수 조회</a>
+            <a href="../index.html?view=group-network" class="nav-item" data-view="group-network"><i class="fa-solid fa-sitemap"></i>그룹사 네트워크</a>
+            <a href="../index.html?view=company-financial" class="nav-item" data-view="company-financial"><i class="fa-solid fa-chart-pie"></i>기업 파이낸셜 분석</a>
+            <a href="../index.html?view=financial-statement" class="nav-item" data-view="financial-statement"><i class="fa-solid fa-file-invoice-dollar"></i>재무제표 분석</a>
+            <a href="../index.html?view=valuation" class="nav-item" data-view="valuation"><i class="fa-solid fa-calculator"></i>밸류에이션 실습</a>
+            <a href="../index.html?view=portfolio" class="nav-item" data-view="portfolio"><i class="fa-solid fa-briefcase"></i>포트폴리오 최적화</a>
+            <a href="../index.html?view=risk" class="nav-item" data-view="risk"><i class="fa-solid fa-shield-halved"></i>리스크 분석 (VaR)</a>
+
+            <div class="nav-group-label">기술적 분석</div>
+            <a href="../index.html?view=technical-chart" class="nav-item" data-view="technical-chart"><i class="fa-solid fa-chart-candlestick"></i>기술적 분석 실습</a>
+            <a href="../index.html?view=backtest" class="nav-item" data-view="backtest"><i class="fa-solid fa-clock-rotate-left"></i>백테스트 엔진</a>
+            <a href="../index.html?view=pipeline" class="nav-item" data-view="pipeline"><i class="fa-solid fa-diagram-project"></i>퀀트 파이프라인</a>
+
+            <div class="nav-group-label">ML / DL</div>
+            <a href="../index.html?view=cross-validation" class="nav-item" data-view="cross-validation"><i class="fa-solid fa-check-double"></i>Cross Validation</a>
+            <a href="../index.html?view=random-forest" class="nav-item" data-view="random-forest"><i class="fa-solid fa-tree"></i>Random Forest</a>
+            <a href="../index.html?view=kmeans" class="nav-item" data-view="kmeans"><i class="fa-solid fa-object-group"></i>KMeans 클러스터링</a>
+            <a href="../index.html?view=svm" class="nav-item" data-view="svm"><i class="fa-solid fa-border-all"></i>SVM 분류기</a>
+            <a href="../index.html?view=mlp" class="nav-item" data-view="mlp"><i class="fa-solid fa-brain"></i>MLP 신경망</a>
+            <a href="../index.html?view=linear-regression" class="nav-item" data-view="linear-regression"><i class="fa-solid fa-chart-line"></i>선형 회귀</a>
+            <a href="../index.html?view=lstm" class="nav-item" data-view="lstm"><i class="fa-solid fa-wave-square"></i>LSTM 예측</a>
+            <a href="../index.html?view=transformer" class="nav-item" data-view="transformer"><i class="fa-solid fa-robot"></i>Transformer</a>
+          </div>
+        </div>
+
+        <!-- ─────── 퀴즈 ─────── -->
+        <div class="nav-section">
+          <button class="nav-section-hdr" onclick="toggleNav('quiz')">
+            <span><i class="fa-solid fa-circle-question"></i>퀴즈</span>
+            <i class="fa-solid fa-chevron-down nav-chev" id="chev-quiz"></i>
+          </button>
+          <div class="nav-children" id="nav-quiz">
+            <a href="../index.html?view=quiz-home" class="nav-item" data-view="quiz-home"><i class="fa-solid fa-calendar-check"></i>문항 관리/응시</a>
+            <div class="nav-group-label">15일간의 시험</div>
+            <a href="../index.html?view=quiz-day-1" class="nav-item" data-view="quiz-day-1"><i class="fa-solid fa-list-check"></i>Day 1 · 법인·세금·금리</a>
+            <a href="../index.html?view=quiz-day-2" class="nav-item" data-view="quiz-day-2"><i class="fa-solid fa-list-check"></i>Day 2 · 경제지표·물가·유가</a>
+            <a href="../index.html?view=quiz-day-3" class="nav-item" data-view="quiz-day-3"><i class="fa-solid fa-list-check"></i>Day 3 · 거시경제 분석</a>
+            <a href="../index.html?view=quiz-day-4" class="nav-item" data-view="quiz-day-4"><i class="fa-solid fa-list-check"></i>Day 4 · 산업 분석</a>
+            <a href="../index.html?view=quiz-day-5" class="nav-item" data-view="quiz-day-5"><i class="fa-solid fa-list-check"></i>Day 5 · 산업 분석 실습</a>
+            <a href="../index.html?view=quiz-day-6" class="nav-item" data-view="quiz-day-6"><i class="fa-solid fa-list-check"></i>Day 6 · 재무제표 분석 I</a>
+            <a href="../index.html?view=quiz-day-7" class="nav-item" data-view="quiz-day-7"><i class="fa-solid fa-list-check"></i>Day 7 · 재무제표 분석 II</a>
+            <a href="../index.html?view=quiz-day-8" class="nav-item" data-view="quiz-day-8"><i class="fa-solid fa-list-check"></i>Day 8 · 상대가치 평가</a>
+            <a href="../index.html?view=quiz-day-9" class="nav-item" data-view="quiz-day-9"><i class="fa-solid fa-list-check"></i>Day 9 · 기술적 분석 I</a>
+            <a href="../index.html?view=quiz-day-10" class="nav-item" data-view="quiz-day-10"><i class="fa-solid fa-list-check"></i>Day 10 · 기술적 분석 II</a>
+            <a href="../index.html?view=quiz-day-11" class="nav-item" data-view="quiz-day-11"><i class="fa-solid fa-list-check"></i>Day 11 · 주식·배당·금융상품</a>
+            <a href="../index.html?view=quiz-day-12" class="nav-item" data-view="quiz-day-12"><i class="fa-solid fa-list-check"></i>Day 12 · 금융상품 구분</a>
+            <a href="../index.html?view=quiz-day-13" class="nav-item" data-view="quiz-day-13"><i class="fa-solid fa-list-check"></i>Day 13 · ETF 심화</a>
+            <a href="../index.html?view=quiz-day-14" class="nav-item" data-view="quiz-day-14"><i class="fa-solid fa-list-check"></i>Day 14 · 포트폴리오 이론</a>
+            <a href="../index.html?view=quiz-day-15" class="nav-item" data-view="quiz-day-15"><i class="fa-solid fa-list-check"></i>Day 15 · 자산배분·금융 규제</a>
+          </div>
+        </div>
+
+        <!-- ─────── 외부 자료 (별도 정적 페이지) ─────── -->
+        <div class="nav-section">
+          <button class="nav-section-hdr" onclick="toggleNav('external')">
+            <span><i class="fa-solid fa-up-right-from-square"></i>외부 자료</span>
+            <i class="fa-solid fa-chevron-down nav-chev" id="chev-external"></i>
+          </button>
+          <div class="nav-children" id="nav-external">
+            <a class="nav-item" href="youtube.html" data-page="youtube"><i class="fa-brands fa-youtube"></i>유튜브 학습 영상</a>
+            <a class="nav-item" href="wikimedia.html" data-page="wikimedia"><i class="fa-brands fa-wikipedia-w"></i>위키백과 참고자료</a>
+            <a class="nav-item" href="notebooklm.html" data-page="notebooklm"><i class="fa-solid fa-book-open"></i>NotebookLM 학습노트</a>
+          </div>
+        </div>
+
+      </nav>

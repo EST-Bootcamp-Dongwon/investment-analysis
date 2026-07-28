@@ -1,0 +1,44 @@
+services:
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/edumgt/investment-analysis-backend:latest}
+    container_name: investment_backend
+    restart: unless-stopped
+    ports:
+      - "8801:8000"
+    env_file:
+      - app/backend/.env
+    environment:
+      - MONGODB_URL=mongodb://mongo:27017
+      - MONGODB_DB=investment_db
+      - QDRANT_URL=http://qdrant:6333
+    depends_on:
+      - mongo
+      - qdrant
+    networks:
+      - investment-net
+
+  mongo:
+    image: mongo:7
+    container_name: investment_mongo
+    restart: unless-stopped
+    volumes:
+      - investment_mongo_data:/data/db
+    networks:
+      - investment-net
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: investment_qdrant
+    restart: unless-stopped
+    volumes:
+      - investment_qdrant_data:/qdrant/storage
+    networks:
+      - investment-net
+
+networks:
+  investment-net:
+    driver: bridge
+
+volumes:
+  investment_mongo_data:
+  investment_qdrant_data:
