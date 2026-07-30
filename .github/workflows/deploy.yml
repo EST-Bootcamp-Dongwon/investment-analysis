@@ -1,12 +1,17 @@
 name: Build and Deploy
 
+# 2026-07-30: 계정 이관 과정에서 자동 실행을 차단했다.
+# 이 폴더가 별도 저장소로 분리되면 루트 워크플로가 되어 push마다 자동 실행되므로,
+# push 트리거를 제거하고 수동 실행(workflow_dispatch)만 남긴다.
+# 재활성화하려면 아래 push 블록을 복원하기 전에 저장소 Secrets부터 등록한다.
+#
+#  push:
+#    branches: [main]
+#    paths-ignore:
+#      - "readme.md"
+#      - "image.png"
+#      - ".claude/**"
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "readme.md"
-      - "image.png"
-      - ".claude/**"
   workflow_dispatch: {}
 
 permissions:
