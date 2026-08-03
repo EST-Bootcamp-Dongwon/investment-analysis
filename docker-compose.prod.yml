@@ -1,6 +1,9 @@
+# 배포할 이미지는 같은 폴더의 .env 에 BACKEND_IMAGE 로 지정한다.
+# (서버의 sudo 가 환경변수를 넘기지 못해 export 방식은 조용히 무시된다.)
+# 아래 기본값은 .env 가 없을 때만 쓰이며, 강사님 원본이 아닌 우리 포크 이미지를 가리킨다.
 services:
   backend:
-    image: ${BACKEND_IMAGE:-ghcr.io/edumgt/investment-analysis-backend:latest}
+    image: ${BACKEND_IMAGE:-ghcr.io/est-bootcamp-dongwon/investment-analysis-backend:latest}
     container_name: investment_backend
     restart: unless-stopped
     ports:

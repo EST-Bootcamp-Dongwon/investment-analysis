@@ -25,14 +25,21 @@ concurrency:
   group: investment-analysis-main
   cancel-in-progress: true
 
-env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/investment-analysis-backend
-
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.image }}
     steps:
       - uses: actions/checkout@v4
+
+      # GHCR 저장소 이름은 소문자만 허용한다. 조직명 EST-Bootcamp-Dongwon 을 그대로 쓰면
+      # "repository name must be lowercase" 로 push 가 실패하므로 여기서 소문자로 바꾼다.
+      - name: Compute image name
+        id: image
+        run: echo "image=ghcr.io/${OWNER,,}/investment-analysis-backend" >> "$GITHUB_OUTPUT"
+        env:
+          OWNER: ${{ github.repository_owner }}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -47,8 +54,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ steps.image.outputs.image }}:latest
+            ${{ steps.image.outputs.image }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -128,9 +135,12 @@ jobs:
             # MongoDB·Qdrant 볼륨과 실행 중인 서비스는 삭제하지 않는다.
             sudo docker container prune -f
             sudo docker image prune -af
-            export BACKEND_IMAGE=$IMAGE:$GITHUB_SHA
-            sudo -E docker compose -f docker-compose.prod.yml pull backend
-            sudo -E docker compose -f docker-compose.prod.yml up -d
+            # 배포 서버(Ubuntu 26.04)의 sudo 는 -E 를 줘도 환경변수를 넘기지 않아
+            # export + 'sudo -E' 방식은 BACKEND_IMAGE 가 유실되고 엉뚱한 기본 이미지가 뜬다.
+            # compose 가 프로젝트 디렉터리의 .env 를 자동으로 읽는 성질을 이용해 파일로 전달한다.
+            printf 'BACKEND_IMAGE=%s\n' '$IMAGE:$GITHUB_SHA' > $DEPLOY_PATH/.env
+            sudo docker compose -f docker-compose.prod.yml pull backend
+            sudo docker compose -f docker-compose.prod.yml up -d
             sudo docker image prune -f
           "
         env:
@@ -139,7 +149,7 @@ jobs:
           DEPLOY_PATH: /opt/investment-analysis
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_ACTOR: ${{ github.actor }}
-          IMAGE: ${{ env.IMAGE }}
+          IMAGE: ${{ needs.build.outputs.image }}
 
       - name: Reindex RAG documents
         if: steps.docs_changed.outputs.changed == 'true'
