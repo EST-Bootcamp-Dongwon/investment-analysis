@@ -158,7 +158,7 @@ const statementCards = [
       ['회사채 신용스프레드', '신용등급별 회사채 금리 − 국고채 금리 — 확대 시 경기 우려 신호입니다.'],
       ['CD금리(91일물)', '국내 변동금리 기준 — 주택담보대출·기업 단기차입 금리에 직접 연동됩니다.'],
       ['장단기 금리차', '10년물 − 2년물 국고채 수익률 — 역전(음수)이면 경기침체 선행 신호입니다.'],
-      ['데이터 원천', '한국은행 ECOS / 금융투자협회 채권정보센터 / KRX 채권시장 / FRED(미국)'],
+      ['데이터 원천', '한국은행 ECOS / 금융투자협회 채권정보센터 / KRX 채권시장 '],
     ],
     analysis: [
       '장단기 금리차 역전은 과거 경기침체를 6~18개월 앞서 나타난 선행지표입니다.',
@@ -239,7 +239,7 @@ export function financialStatementView(container) {
             </div>
             ${card.sourceUrl ? `
             <div class="stmt-img-credit">
-              <a href="${card.sourceUrl}" target="_blank" rel="noopener noreferrer">
+              <a href="${card.sourceUrl}" target="_new" rel="noopener noreferrer">
                 <i class="fa-solid fa-arrow-up-right-from-square"></i> ${card.sourceLabel}
               </a>
             </div>` : ''}

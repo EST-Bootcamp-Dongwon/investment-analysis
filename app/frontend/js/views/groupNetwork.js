@@ -201,7 +201,7 @@ export function groupNetworkView(container) {
 
               <!-- DART 링크 -->
               <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                <a href="${escapeHtml(item.dart_url)}" target="_blank" rel="noopener noreferrer"
+                <a href="${escapeHtml(item.dart_url)}" target="_new" rel="noopener noreferrer"
                   style="font-size:0.78rem; color:#2962ff; text-decoration:none; font-weight:600;
                          display:inline-flex; align-items:center; gap:4px;">
                   <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.72rem;"></i>

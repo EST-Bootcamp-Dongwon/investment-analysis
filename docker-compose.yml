@@ -1,25 +1,93 @@
-version: '3.9'
+name: investment-analysis
+
+# 로컬 PC 실행용 구성입니다.
+# 운영 서버는 docker-compose.prod.yml을 사용합니다.
 services:
   backend:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        BUILDKIT_INLINE_CACHE: "1"
     container_name: investment_backend
     restart: unless-stopped
     ports:
-    - 8800:8000
-    env_file:
-    - app/backend/.env
+      - "${APP_PORT:-8000}:8000"
     environment:
-    - MONGODB_URL=mongodb://mongo:27017
-    - MONGODB_DB=investment_db
-    - QDRANT_URL=http://qdrant:6333
+      MONGODB_URL: mongodb://mongo:27017
+      MONGODB_DB: ${MONGODB_DB:-investment_db}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-investment_docs}
+      DART_API_KEY: ${DART_API_KEY:-}
+      KOSIS_API_KEY: ${KOSIS_API_KEY:-}
+      BOK_API_KEY: ${BOK_API_KEY:-}
     volumes:
-    - ./docs:/app/docs:ro
-    networks:
-    - shared-net
-networks:
-  shared-net:
-    external: true
+      - ./docs:/app/docs:ro
+    depends_on:
+      mongo:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  mongo:
+    image: mongo:7
+    container_name: investment_mongo
+    restart: unless-stopped
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGODB_DB:-investment_db}
+    volumes:
+      - investment_mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    container_name: investment_qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - investment_qdrant_data:/qdrant/storage
+
+  # `docker compose --profile init up -d`로 첫 실행할 때 100문항을 적재합니다.
+  quiz-init:
+    profiles: ["init"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: "no"
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: ["sh", "-c", "curl --fail --request POST http://backend:8000/api/quiz/seed"]
+
+  # 문서를 변경한 뒤 `docker compose --profile tools run --rm docs-index`로 실행합니다.
+  docs-index:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: "no"
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-investment_docs}
+    volumes:
+      - ./docs:/app/docs:ro
+    depends_on:
+      qdrant:
+        condition: service_started
+    command: ["/app/scripts/upload_docs_to_qdrant.sh"]
+
+volumes:
+  investment_mongo_data:
+  investment_qdrant_data:

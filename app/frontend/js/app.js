@@ -1,4 +1,7 @@
 import { homeView }            from './views/home.js';
+import { serverResourcesView } from './views/serverResources.js';
+import { volumeCloudView }    from './views/volumeCloud.js';
+import { worldMarketsView }   from './views/worldMarkets.js';
 import { crossValidationView } from './views/crossValidation.js';
 import { decisionBoundaryView } from './views/decisionBoundary.js';
 import { randomForestView }    from './views/randomForest.js';
@@ -33,7 +36,6 @@ import { companyFinancialView } from './views/companyFinancial.js';
 import { learnView }            from './views/learn.js';
 import { taxAccountingView }         from './views/taxAccounting.js';
 import { dartFinancialAnalysisView } from './views/dartFinancialAnalysis.js';
-import { ollamaView }               from './views/ollama.js';
 import { api }                 from './api.js';
 import { LEARN_DOCS }          from './data/learnDocs.js';
 import { restoreFormState, saveFormState } from './utils/localState.js';
@@ -42,6 +44,8 @@ const app        = document.getElementById('app');
 const breadcrumb = document.getElementById('breadcrumb');
 const TOPBAR_MARKETS = ['^KS11', '^IXIC', 'KRW=X'];
 const TOPBAR_REFRESH_MS = 30_000;
+const VISITOR_HEARTBEAT_MS = 30_000;
+const VISITOR_ID_KEY = 'investment_analysis_visitor_id';
 
 const learnRoutes = Object.fromEntries(
   LEARN_DOCS.map((doc) => [
@@ -51,14 +55,17 @@ const learnRoutes = Object.fromEntries(
 );
 
 const quizDayRoutes = Object.fromEntries(
-  Array.from({ length: 15 }, (_, i) => i + 1).map(d => [
+  Array.from({ length: 5 }, (_, i) => i + 1).map(d => [
     `quiz-day-${d}`,
-    { label: `통합 모의고사 응시 Day ${d}`, render: () => quizDayView(app, d, navigate) },
+    { label: `주식 ${d} 퀴즈`, render: () => quizDayView(app, d, navigate) },
   ])
 );
 
 const routes = {
-  'home':              { label: '홈',                     render: () => homeView(app, navigate) },
+  'home':              { label: '대시보드',               render: () => homeView(app, navigate) },
+  'server-resources':  { label: '서버 리소스',             render: () => serverResourcesView(app) },
+  'volume-cloud':     { label: '거래량 클라우드',          render: () => volumeCloudView(app) },
+  'world-markets':    { label: '세계증시현황',              render: () => worldMarketsView(app) },
   'cross-validation':  { label: 'Cross Validation',       render: () => crossValidationView(app) },
   'decision-boundary': { label: 'Decision Boundary',      render: () => decisionBoundaryView(app) },
   'random-forest':     { label: 'Random Forest',          render: () => randomForestView(app) },
@@ -91,7 +98,6 @@ const routes = {
   'investment-tree':     { label: '투자 성향 분석',              render: () => investmentTreeView(app) },
   'tax-accounting':              { label: '세무·회계 시뮬레이션',         render: () => taxAccountingView(app) },
   'dart-financial-analysis':    { label: 'DART 재무 AI 분석',             render: () => dartFinancialAnalysisView(app) },
-  'ollama':                     { label: 'Ollama AI 엔진 관리',           render: () => ollamaView(app) },
   'quiz-home':           { label: '퀴즈 · 통합 모의고사',        render: () => quizHomeView(app, navigate) },
   ...quizDayRoutes,
   ...learnRoutes,
@@ -251,9 +257,10 @@ function navigate(view) {
     'dart-region-search','group-network','company-financial','financial-statement','valuation',
     'portfolio','risk','technical-chart','backtest','pipeline','cross-validation','random-forest',
     'kmeans','svm','mlp','linear-regression','lstm','transformer','market-snapshot','financial-knowledge'];
-  const _aiViews = ['dart-financial-analysis','dart-company-search','tax-accounting','ollama'];
+  const _aiViews = ['dart-financial-analysis','dart-company-search','tax-accounting'];
   const activeSections = [];
-  if (view?.startsWith('learn-')) activeSections.push('learn');
+  if (['learn-10', 'learn-11'].includes(view)) activeSections.push('review');
+  else if (view?.startsWith('learn-')) activeSections.push('learn');
   if (view?.startsWith('quiz-')) activeSections.push('quiz');
   if (_practiceViews.includes(view)) activeSections.push('practice');
   if (_aiViews.includes(view)) activeSections.push('aitools');
@@ -367,13 +374,46 @@ async function refreshTopbarMarkets() {
   }
 }
 
+function visitorId() {
+  const createId = () => {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID().replaceAll('-', '');
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  };
+  try {
+    const saved = localStorage.getItem(VISITOR_ID_KEY);
+    if (saved) return saved;
+    const id = createId();
+    localStorage.setItem(VISITOR_ID_KEY, id);
+    return id;
+  } catch {
+    return createId();
+  }
+}
+
+async function refreshVisitorCount() {
+  const badge = document.getElementById('visitor-count');
+  const text = badge?.querySelector('span');
+  if (!text) return;
+  try {
+    const data = await api.visitorHeartbeat({ visitor_id: visitorId() });
+    text.textContent = `현재 접속 ${Number(data.active_visitors || 0).toLocaleString('ko-KR')}명`;
+  } catch {
+    text.textContent = '현재 접속 확인 불가';
+  }
+}
+
 checkHealth();
 setInterval(checkHealth, 30000);
 refreshTopbarMarkets();
 setInterval(refreshTopbarMarkets, TOPBAR_REFRESH_MS);
+refreshVisitorCount();
+setInterval(refreshVisitorCount, VISITOR_HEARTBEAT_MS);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshVisitorCount();
+});
 
 // Boot
-// pages/*.html(외부 자료 정적 페이지)의 사이드바 링크가 index.html?view=xxx 형태로
+// pages/*.html 정적 페이지의 사이드바 링크가 index.html?view=xxx 형태로
 // 돌아오므로, 쿼리스트링에 유효한 view가 있으면 그 화면으로 바로 진입한다.
 const requestedView = new URLSearchParams(window.location.search).get('view');
 navigate(requestedView && routes[requestedView] ? requestedView : 'home');

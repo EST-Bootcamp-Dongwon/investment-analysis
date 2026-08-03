@@ -1,30 +1,21 @@
 fastapi
 uvicorn[standard]
-gunicorn
 orjson
-aiofiles
 python-multipart
-httpx
 python-dotenv
 motor
 pymongo
+
+# 데이터·시장 조회와 차트 생성
 numpy
 pandas
-scipy
-statsmodels
-pyarrow
 openpyxl
-requests
 yfinance
 pykrx
-pandas-ta
-mplfinance
 matplotlib
-seaborn
-plotly
-reportlab
+
+# 백엔드 라우터의 분석·이미지 처리 기능
 scikit-learn
 torch
-transformers
 diffusers
 opencv-python

@@ -8,6 +8,13 @@
  */
 const HISTORY_KEY = 'yt_watch_history_v1';
 const DATA_URL = '../js/data/youtubeVideos.json';
+const VIDEO_MODULES = [
+  { title: '주식 1', subtitle: '경제와 산업을 살펴봐요', topics: ['산업·경쟁력 분석'] },
+  { title: '주식 2', subtitle: '회사 성적표를 읽어요', topics: ['재무제표로 기업 분석', 'PER·PBR·ROE 가치평가', '현금흐름·기업가치'] },
+  { title: '주식 3', subtitle: '차트와 시장을 읽어요', topics: ['이동평균·추세 분석', 'RSI·MACD 보조지표'] },
+  { title: '주식 4', subtitle: '주식과 ETF를 알아봐요', topics: ['주식 투자 입문', 'ETF 투자 기초', '배당주·배당 ETF'] },
+  { title: '주식 5', subtitle: '나누어 담고 지켜요', topics: ['분산투자와 리스크 관리'] },
+];
 
 let ytPlayer = null;
 let ytApiPromise = null;
@@ -234,17 +241,29 @@ async function render() {
     return;
   }
 
-  const topicSections = Object.entries(data).map(([label, info]) => `
-    <div class="video-topic-block">
-      <div class="resource-category">${info.category}</div>
-      <h3 class="video-topic-label">${label}</h3>
-      <div class="grid-3">${info.videos.map(videoCard).join('')}</div>
-    </div>
-  `).join('');
+  const topicSections = VIDEO_MODULES.map((module) => {
+    const topics = module.topics
+      .map((label) => ({ label, info: data[label] }))
+      .filter(({ info }) => info);
+    return `
+      <section class="video-module-block">
+        <div class="resource-module-head">
+          <div><span class="resource-module-kicker">${module.title}</span><h2>${module.subtitle}</h2></div>
+          <p>영상은 뜻을 이해하는 데만 사용하고, ‘수익 보장’ 같은 말은 믿지 않아요.</p>
+        </div>
+        ${topics.map(({ label, info }) => `
+          <div class="video-topic-block">
+            <div class="resource-category">${info.category}</div>
+            <h3 class="video-topic-label">${label}</h3>
+            <div class="grid-3">${info.videos.map(videoCard).join('')}</div>
+          </div>`).join('')}
+      </section>`;
+  }).join('');
 
   el.innerHTML = `
     <div class="resource-hero">
-      <h1><i class="fa-brands fa-youtube" style="color:#ff0000"></i> 주식 투자 학습 영상</h1>
+      <h1><i class="fa-brands fa-youtube" style="color:#ff0000"></i> 주식 1~5 영상 자료</h1>
+      <p>주식 1부터 순서대로, 모르는 말을 이해하는 데 도움이 되는 영상만 골라 보세요.</p>
     </div>
 
     <div id="yt-player-wrap" class="card yt-player-card">

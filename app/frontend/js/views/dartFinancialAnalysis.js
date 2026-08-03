@@ -153,25 +153,8 @@ function finTableHTML(snap, bsns_year) {
 
 // ── Main render ───────────────────────────────────────────────────────────────
 
-function renderOllamaText(ollamaData) {
-  if (!ollamaData?.text) return '';
-  const lines = ollamaData.text.split('\n').filter(l => l.trim());
-  return `
-    <div style="background:#0a1628; border:1px solid #1e3a5f; border-radius:12px; padding:20px; margin-bottom:18px;">
-      <div style="font-size:0.88rem; font-weight:700; color:#e2e8f0; margin-bottom:14px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-        <i class="fa-solid fa-microchip" style="color:#6366f1;"></i>
-        <span>Ollama AI 분석</span>
-        <span style="background:#1e3a5f; color:#93c5fd; font-size:0.68rem; padding:2px 8px; border-radius:4px; font-weight:600;">
-          ${esc(ollamaData.model_used || 'llama3')}
-        </span>
-        <span style="font-size:0.7rem; color:#475569; font-weight:400;">${esc(ollamaData.host || '')}</span>
-      </div>
-      <div style="font-size:0.85rem; color:#cbd5e1; line-height:1.8; white-space:pre-wrap;">${esc(ollamaData.text)}</div>
-    </div>`;
-}
-
 function renderAnalysis(data, container) {
-  const { company, financials, ratios, health, analysis, ollama, bsns_year } = data;
+  const { company, financials, ratios, health, analysis, bsns_year } = data;
   const { score, grade, verdict, breakdown } = health;
   const { outlook, outlook_color, outlook_reason, paragraphs, disclaimer } = analysis;
 
@@ -256,15 +239,11 @@ function renderAnalysis(data, container) {
       </div>
     </div>
 
-    <!-- Ollama AI analysis (shown first when available) -->
-    ${renderOllamaText(ollama)}
-
-    <!-- Rule-based AI Analysis paragraphs -->
+    <!-- Rule-based analysis paragraphs -->
     <div style="background:#1e293b; border:1px solid #334155; border-radius:12px; padding:20px; margin-bottom:18px;">
       <div style="font-size:0.88rem; font-weight:700; color:#e2e8f0; margin-bottom:14px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
         <i class="fa-solid fa-robot" style="color:#6366f1;"></i> 재무 분석 (룰 기반)
         <span style="font-size:0.72rem; color:#475569; font-weight:400;">(DART 공시 데이터 기반 자동 분석)</span>
-        ${ollama?.available === false ? '<span style="font-size:0.68rem; background:#1c0808; color:#f87171; padding:2px 8px; border-radius:4px;">Ollama 미연결</span>' : ''}
       </div>
       <div style="display:flex; flex-direction:column; gap:12px;">
         ${paragraphs.map((p, i) => `
@@ -306,10 +285,10 @@ export function dartFinancialAnalysisView(container) {
   container.innerHTML = `
     <div style="margin-bottom:20px;">
       <h1 style="font-size:1.25rem; font-weight:700; color:#1e293b; margin-bottom:6px;">
-        <i class="fa-solid fa-magnifying-glass-dollar" style="margin-right:8px; color:#3b82f6;"></i>DART 기업 재무 AI 분석
+        <i class="fa-solid fa-magnifying-glass-dollar" style="margin-right:8px; color:#3b82f6;"></i>DART 기업 재무 분석
       </h1>
       <p style="font-size:0.875rem; color:#64748b; line-height:1.6;">
-        DART에서 기업을 검색해 재무제표를 불러오고, AI가 재무 건전성·KOSPI/KOSDAQ 구분·투자 전망을 분석합니다.
+        DART에서 기업을 검색해 재무제표를 불러오고, 재무 건전성·KOSPI/KOSDAQ 구분·투자 관점의 지표를 자동으로 정리합니다.
       </p>
     </div>
 
@@ -337,7 +316,7 @@ export function dartFinancialAnalysisView(container) {
       <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap;
           gap:10px; margin-bottom:14px;">
         <div style="font-size:0.9rem; font-weight:700; color:#e2e8f0;">
-          <i class="fa-solid fa-robot" style="margin-right:7px; color:#6366f1;"></i>AI 재무 분석 결과
+          <i class="fa-solid fa-chart-line" style="margin-right:7px; color:#6366f1;"></i>재무 분석 결과
         </div>
         <div style="display:flex; gap:10px; align-items:center;">
           <div>
@@ -355,24 +334,11 @@ export function dartFinancialAnalysisView(container) {
               <option value="11014">3분기</option>
             </select>
           </div>
-          <div>
-            <label class="param-label" style="display:inline; margin-right:6px;">
-              <i class="fa-solid fa-microchip" style="color:#6366f1; margin-right:3px;"></i>Ollama 모델
-            </label>
-            <select id="dfa-ollama-model" class="param-input" style="background:#0f172a; color:#e2e8f0; padding:5px 8px; min-width:160px;">
-              <option value="">기본값 (llama3)</option>
-              <option value="llama3:latest">llama3:latest</option>
-              <option value="llama3.1:8b">llama3.1:8b</option>
-              <option value="qwen2.5:7b">qwen2.5:7b</option>
-              <option value="exaone3.5:7.8b">exaone3.5:7.8b</option>
-            </select>
-          </div>
         </div>
       </div>
       <div id="dfa-loading" style="display:none; text-align:center; padding:40px; color:#94a3b8; font-size:0.9rem;">
         <i class="fa-solid fa-spinner fa-spin" style="font-size:2rem; color:#3b82f6; margin-bottom:12px; display:block;"></i>
-        DART 재무제표 조회 및 AI 분석 중입니다…<br>
-        <span style="font-size:0.78rem; color:#475569; margin-top:4px; display:block;">Ollama 분석 포함 시 30~60초 소요될 수 있습니다</span>
+        DART 재무제표를 조회하고 재무 지표를 계산하고 있습니다…
       </div>
       <div id="dfa-analysis-content"></div>
     </div>
@@ -402,7 +368,6 @@ export function dartFinancialAnalysisView(container) {
   const contentEl     = container.querySelector('#dfa-analysis-content');
   const yearSel        = container.querySelector('#dfa-year');
   const reprtSel       = container.querySelector('#dfa-reprt');
-  const ollamaModelSel = container.querySelector('#dfa-ollama-model');
 
   // ── Search ────────────────────────────────────────────────────────────────
   async function doSearch() {
@@ -488,9 +453,6 @@ export function dartFinancialAnalysisView(container) {
         bsns_year:    yearSel.value,
         reprt_code:   reprtSel.value,
       };
-      const selModel = ollamaModelSel?.value;
-      if (selModel) payload.ollama_model = selModel;
-
       const data = await apiFetch('/api/dart/financial-analysis', {
         method: 'POST',
         body: JSON.stringify(payload),

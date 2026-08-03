@@ -218,7 +218,7 @@ export function dartRegionSearchView(container) {
                   ${useEmpFilter ? `<td style="text-align:right; font-weight:700;">${item.emp_count !== null ? item.emp_count.toLocaleString('ko-KR') : '–'}</td>` : ''}
                   <td>
                     <a href="https://dart.fss.or.kr/corp/main.do?corp_code=${escapeHtml(item.corp_code)}"
-                       target="_blank" rel="noopener"
+                       target="_new" rel="noopener"
                        style="color:var(--primary); font-size:.82rem; display:inline-flex; align-items:center; gap:3px;">
                       <i class="fa-solid fa-arrow-up-right-from-square"></i>
                     </a>
