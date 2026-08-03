@@ -3,6 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash \
       curl \
       fonts-nanum \
     && rm -rf /var/lib/apt/lists/*
@@ -26,5 +27,8 @@ RUN chmod +x ./scripts/upload_docs_to_qdrant.sh \
     && python ./scripts/build_sidebar_partial.py
 
 EXPOSE 8000
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=10 \
+    CMD curl --fail http://localhost:8000/api/health || exit 1
 
 CMD ["uvicorn", "app.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

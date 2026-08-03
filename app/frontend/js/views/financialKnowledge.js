@@ -85,7 +85,7 @@ export function financialKnowledgeView(container) {
         <i class="fa-solid fa-scale-balanced"></i> ETF 2종 비교 (선택 조건 중심)
       </h2>
       <p style="font-size:0.8rem; color:#64748b; margin:0 0 12px; line-height:1.5;">
-        수익률, 괴리율(절대값), 추적오차, 펀드보수를 함께 비교하고 거래 수수료 차이도 함께 확인합니다.
+        수익률, 괴리율(ETF 시장 가격과 실제 자산값의 차이), 추적오차(지수를 따라간 정도의 차이), 펀드보수(보유 기간에 드는 운영 비용)를 함께 비교하고 거래 수수료 차이도 함께 확인합니다.
       </p>
 
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px;">
@@ -95,11 +95,11 @@ export function financialKnowledgeView(container) {
           <input id="etf-a-name" class="param-input" value="ETF A" />
           <label class="param-label">최근 1년 수익률 (%)</label>
           <input id="etf-a-ret" type="number" class="param-input" value="12" step="0.1" />
-          <label class="param-label">괴리율 절대값 (%)</label>
+          <label class="param-label">괴리율(시장 가격과 실제 자산값의 차이, %) </label>
           <input id="etf-a-gap" type="number" class="param-input" value="0.20" step="0.01" min="0" />
-          <label class="param-label">추적오차 (%)</label>
+          <label class="param-label">추적오차(지수를 따라간 정도의 차이, %) </label>
           <input id="etf-a-te" type="number" class="param-input" value="0.35" step="0.01" min="0" />
-          <label class="param-label">펀드보수 TER (%)</label>
+          <label class="param-label">펀드보수 TER(1년 운영 비용 비율, %) </label>
           <input id="etf-a-fee" type="number" class="param-input" value="0.09" step="0.01" min="0" />
           <label class="param-label">주식거래 수수료(왕복, %) </label>
           <input id="etf-a-commission" type="number" class="param-input" value="0.03" step="0.01" min="0" />
@@ -111,11 +111,11 @@ export function financialKnowledgeView(container) {
           <input id="etf-b-name" class="param-input" value="ETF B" />
           <label class="param-label">최근 1년 수익률 (%)</label>
           <input id="etf-b-ret" type="number" class="param-input" value="10" step="0.1" />
-          <label class="param-label">괴리율 절대값 (%)</label>
+          <label class="param-label">괴리율(시장 가격과 실제 자산값의 차이, %) </label>
           <input id="etf-b-gap" type="number" class="param-input" value="0.35" step="0.01" min="0" />
-          <label class="param-label">추적오차 (%)</label>
+          <label class="param-label">추적오차(지수를 따라간 정도의 차이, %) </label>
           <input id="etf-b-te" type="number" class="param-input" value="0.60" step="0.01" min="0" />
-          <label class="param-label">펀드보수 TER (%)</label>
+          <label class="param-label">펀드보수 TER(1년 운영 비용 비율, %) </label>
           <input id="etf-b-fee" type="number" class="param-input" value="0.20" step="0.01" min="0" />
           <label class="param-label">주식거래 수수료(왕복, %) </label>
           <input id="etf-b-commission" type="number" class="param-input" value="0.03" step="0.01" min="0" />
@@ -175,9 +175,9 @@ export function financialKnowledgeView(container) {
           </thead>
           <tbody>
             ${renderCompareRow('수익률(%)', etfA.ret, etfB.ret, true)}
-            ${renderCompareRow('괴리율 절대값(%)', etfA.gap, etfB.gap, false)}
-            ${renderCompareRow('추적오차(%)', etfA.te, etfB.te, false)}
-            ${renderCompareRow('펀드보수 TER(%)', etfA.fee, etfB.fee, false)}
+            ${renderCompareRow('괴리율(시장 가격과 실제 자산값의 차이, %)', etfA.gap, etfB.gap, false)}
+            ${renderCompareRow('추적오차(지수를 따라간 정도의 차이, %)', etfA.te, etfB.te, false)}
+            ${renderCompareRow('펀드보수 TER(1년 운영 비용 비율, %)', etfA.fee, etfB.fee, false)}
             ${renderCompareRow('주식거래 수수료 왕복(%)', etfA.commission, etfB.commission, false)}
             ${renderCompareRow('1년 총비용 추정(보수+수수료, %)', etfA.fee + etfA.commission, etfB.fee + etfB.commission, false)}
             ${renderScoreRow('수익률 점수', a.retScore, b.retScore)}

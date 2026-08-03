@@ -14,7 +14,7 @@
     slot.outerHTML = await res.text();
   } catch (err) {
     slot.innerHTML = `<p style="padding:16px;color:var(--text-muted);font-size:.82rem;">
-      메뉴를 불러오지 못했습니다. <a href="../index.html">홈으로 이동</a>
+      메뉴를 불러오지 못했습니다. <a href="../index.html">대시보드로 이동</a>
     </p>`;
     console.error('사이드바 로드 실패:', err);
     return;
@@ -23,13 +23,12 @@
   if (typeof window._orderSidebarSections === 'function') window._orderSidebarSections();
   if (typeof window._ensureSidebarChatbot === 'function') window._ensureSidebarChatbot();
 
-  // 현재 페이지에 해당하는 외부 자료 링크를 활성 표시
+  // 현재 정적 페이지에 해당하는 메뉴 링크를 활성 표시
   const page = document.body.dataset.page;
   if (page) {
     const link = document.querySelector(`.nav-item[data-page="${page}"]`);
     if (link) {
       link.classList.add('active');
-      if (typeof window._openNavSection === 'function') window._openNavSection('external');
     }
   }
 })();

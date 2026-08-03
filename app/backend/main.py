@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timezone
 import io
 import json
 import os
 import re
-import sqlite3
+import time
+from threading import Lock
+from time import monotonic
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -15,131 +18,20 @@ from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
+
 load_dotenv(Path(__file__).parent / ".env")
 
-# ─── Ollama Configuration ─────────────────────────────────────────────────────
-OLLAMA_HOST  = os.getenv("OLLAMA_HOST",  "http://172.29.32.1:11435")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3:latest")
-_OLLAMA_TIMEOUT = 120  # seconds
-
-
-def _ollama_request(endpoint: str, payload: dict, timeout: int = _OLLAMA_TIMEOUT) -> dict:
-    """Send a JSON request to the Ollama API and return parsed response."""
-    url  = OLLAMA_HOST.rstrip("/") + endpoint
-    data = json.dumps(payload).encode()
-    req  = urllib.request.Request(url, data=data,
-                                  headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read())
-    except urllib.error.URLError as exc:
-        raise HTTPException(status_code=503,
-                            detail=f"Ollama 연결 실패 ({OLLAMA_HOST}): {exc.reason}") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=503,
-                            detail=f"Ollama 오류: {exc}") from exc
-
-
-def _ollama_available() -> bool:
-    """Quick connectivity check — returns False instead of raising."""
-    try:
-        url = OLLAMA_HOST.rstrip("/") + "/api/tags"
-        with urllib.request.urlopen(url, timeout=3) as r:
-            return r.status == 200
-    except Exception:
-        return False
-
-
-def _ollama_models() -> list[dict]:
-    """Return list of locally installed Ollama models."""
-    try:
-        url = OLLAMA_HOST.rstrip("/") + "/api/tags"
-        with urllib.request.urlopen(url, timeout=5) as r:
-            return json.loads(r.read()).get("models", [])
-    except Exception:
-        return []
-
-
-def _ollama_chat(
-    model: str,
-    system_prompt: str,
-    user_prompt: str,
-    temperature: float = 0.3,
-    num_predict: int = 800,
-) -> str:
-    """Call Ollama /api/chat and return assistant text content."""
-    result = _ollama_request(
-        "/api/chat",
-        {
-            "model":  model,
-            "stream": False,
-            "options": {"temperature": temperature, "num_predict": num_predict},
-            "messages": [
-                {"role": "system",  "content": system_prompt},
-                {"role": "user",    "content": user_prompt},
-            ],
-        },
-    )
-    return (result.get("message") or {}).get("content", "").strip()
-
-
-def _build_financial_analysis_prompt(
-    corp_name: str, market: str, bsns_year: str,
-    financials: dict, ratios: dict, score: float, grade: str,
-) -> tuple[str, str]:
-    """Return (system_prompt, user_prompt) for Ollama financial analysis."""
-    system_prompt = (
-        "당신은 한국 상장기업 재무분석 전문가입니다. "
-        "DART 전자공시 데이터를 기반으로 투자자가 이해하기 쉬운 한국어로 "
-        "재무 건전성 분석과 투자 의견을 제시합니다. "
-        "답변은 반드시 한국어로, 명확하고 구체적으로 작성하세요."
-    )
-
-    def fmt(v: object, unit: str = "억원") -> str:
-        if v is None:
-            return "N/A"
-        return f"{float(v):,.1f}{unit}"
-
-    def fpct(v: object) -> str:
-        if v is None:
-            return "N/A"
-        return f"{float(v):.1f}%"
-
-    user_prompt = f"""다음 기업의 재무 데이터를 분석해주세요.
-
-【기업 정보】
-- 기업명: {corp_name}
-- 상장시장: {market}
-- 분석 연도: {bsns_year}년
-
-【재무 현황】 (단위: 억원)
-- 매출액: {fmt(financials.get('revenue'))} (전기: {fmt(financials.get('prev_revenue'))}, YoY {fpct(ratios.get('revenue_growth'))})
-- 영업이익: {fmt(financials.get('op_income'))} (영업이익률 {fpct(ratios.get('op_margin'))})
-- 당기순이익: {fmt(financials.get('net_income'))} (순이익률 {fpct(ratios.get('net_margin'))})
-- 자산총계: {fmt(financials.get('total_assets'))}
-- 부채총계: {fmt(financials.get('total_liabilities'))} (부채비율 {fpct(ratios.get('debt_equity_ratio'))})
-- 자본총계: {fmt(financials.get('total_equity'))}
-- 유동비율: {fpct(ratios.get('current_ratio'))}
-- ROE: {fpct(ratios.get('roe'))} / ROA: {fpct(ratios.get('roa'))}
-- 재무 건전성 점수: {score:.0f}/100점 (등급: {grade})
-
-다음 5개 항목으로 나누어 분석해주세요:
-① 재무 건전성 종합 평가 (2~3문장)
-② 수익성 분석 (1~2문장)
-③ 안정성 분석 (1~2문장)
-④ 성장성 분석 (1~2문장)
-⑤ 투자 의견: 반드시 "매수", "중립", "매도" 중 하나를 명시하고 근거를 1~2문장으로 작성"""
-
-    return system_prompt, user_prompt
-
-from bson import ObjectId
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from pymongo.errors import DuplicateKeyError
+
+try:
+    from .openapi_docs import install_openapi
+except ImportError:
+    from openapi_docs import install_openapi
 
 try:
     from .db import get_db
@@ -166,6 +58,9 @@ QUIZ_SQL_PATH = ROOT_DIR / "app" / "backend" / "quiz_seed.sql"
 DOCS_DIR = ROOT_DIR / "docs"
 GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 _MATPLOTLIB_FONT_CONFIGURED = False
+ACTIVE_VISITOR_TTL_SECONDS = 90
+_active_visitors: dict[str, float] = {}
+_active_visitors_lock = Lock()
 
 def _learn_document_map() -> dict[str, Path]:
     """Expose exactly the Markdown files shipped in docs/, without traversal."""
@@ -203,11 +98,7 @@ app = FastAPI(
     title="Python Education Cloud API",
     version="2.0.0",
     description=(
-        "교육용 ML/DL API 서버 | Educational ML/DL API server. "
-        "Supports: Cross-Validation, Decision Boundary, Random Forest, "
-        "KMeans Clustering, SVM, MLP Neural Network, Linear/Polynomial Regression, "
-        "Text Classification (NLP), OpenCV Animation, HuggingFace Diffusion, "
-        "1D CNN Time Series, LSTM Predictor, Transformer Time Series."
+        "주식 투자 입문 가이드"
     ),
     default_response_class=DEFAULT_RESPONSE_CLASS,
 )
@@ -223,116 +114,40 @@ app.add_middleware(
 )
 
 
+try:
+    from .routers.ml import router as ml_router
+    from .routers.quant import router as quant_router
+    from .routers.quiz import router as quiz_router
+    from .routers.tax import router as tax_router
+    from .routers.rag import router as rag_router
+except ImportError:  # Allows `uvicorn main:app` from app/backend.
+    from routers.ml import router as ml_router  # type: ignore
+    from routers.quant import router as quant_router  # type: ignore
+    from routers.quiz import router as quiz_router  # type: ignore
+    from routers.tax import router as tax_router  # type: ignore
+    from routers.rag import router as rag_router  # type: ignore
+app.include_router(ml_router)
+app.include_router(quant_router)
+# Routers registered below are also included before the schema is first requested;
+# the OpenAPI factory is installed at the bottom of this module.
+
 @app.middleware("http")
 async def no_cache_static_assets(request, call_next):
-    """StaticFiles only sets ETag/Last-Modified, so browsers could otherwise
-    keep serving a pre-deploy JS/CSS file after a redeploy. no-store forbids
-    the browser from caching these responses at all, so every load fetches
-    the current deploy instead of depending on cache revalidation."""
+    """Always fetch the latest local HTML, JavaScript, and CSS on page load.
+
+    StaticFiles normally uses ETag/Last-Modified revalidation. The learning
+    app is deployed as a single image, so an old shell or module can otherwise
+    survive a deployment in a browser cache. ``no-store`` plus legacy
+    revalidation headers makes local frontend assets non-cacheable for both
+    browsers and intermediary proxies.
+    """
     response = await call_next(request)
-    if not request.url.path.startswith("/api/"):
-        response.headers["Cache-Control"] = "no-store"
+    path = request.url.path
+    if path == "/" or path.endswith((".html", ".js", ".css")):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
     return response
-
-
-class CrossValidationRequest(BaseModel):
-    n_samples: int = Field(default=1000, ge=200, le=20000)
-    n_features: int = Field(default=10, ge=2, le=100)
-    cv: int = Field(default=5, ge=3, le=10)
-
-
-class RandomForestRequest(BaseModel):
-    test_size: float = Field(default=0.3, ge=0.1, le=0.5)
-
-
-class CircleAnimationRequest(BaseModel):
-    width: int = Field(default=512, ge=128, le=1920)
-    height: int = Field(default=512, ge=128, le=1080)
-    fps: int = Field(default=30, ge=10, le=60)
-
-
-class KMeansRequest(BaseModel):
-    n_samples: int = Field(default=400, ge=100, le=5000)
-    n_clusters: int = Field(default=4, ge=2, le=10)
-    cluster_std: float = Field(default=0.8, ge=0.1, le=3.0)
-
-
-class SVMRequest(BaseModel):
-    kernel: str = Field(default="rbf", pattern="^(rbf|linear|poly)$")
-    C: float = Field(default=1.0, ge=0.01, le=100.0)
-
-
-class MLPRequest(BaseModel):
-    hidden_layers: str = Field(default="128,64,32", pattern=r"^\d+(,\d+)*$")
-    max_iter: int = Field(default=300, ge=50, le=1000)
-    n_samples: int = Field(default=1000, ge=200, le=10000)
-
-
-class LinearRegressionRequest(BaseModel):
-    degree: int = Field(default=1, ge=1, le=5)
-    n_samples: int = Field(default=200, ge=50, le=2000)
-    noise: float = Field(default=3.0, ge=0.0, le=20.0)
-
-
-class TextClassifyRequest(BaseModel):
-    texts: list[str] = Field(default=["The team played amazing hockey tonight!"])
-    max_features: int = Field(default=5000, ge=500, le=20000)
-
-
-class DiffusionRequest(BaseModel):
-    prompt: str = Field(default="A futuristic city skyline at sunset")
-    height: int = Field(default=512, ge=256, le=1024)
-    width: int = Field(default=512, ge=256, le=1024)
-    guidance_scale: float = Field(default=8.0, ge=1.0, le=15.0)
-
-
-class BacktestRequest(BaseModel):
-    fast: int = Field(default=5, ge=2, le=50, description="단기 이동평균 기간")
-    slow: int = Field(default=20, ge=5, le=200, description="장기 이동평균 기간")
-    n_days: int = Field(default=1260, ge=252, le=3780, description="시뮬레이션 일수 (252=1년)")
-    annual_return: float = Field(default=0.08, ge=-0.2, le=0.5)
-    annual_vol: float = Field(default=0.20, ge=0.05, le=1.0)
-    risk_free: float = Field(default=0.03, ge=0.0, le=0.1)
-
-
-class PortfolioRequest(BaseModel):
-    n_portfolios: int = Field(default=3000, ge=500, le=10000)
-    risk_free: float = Field(default=0.03, ge=0.0, le=0.1)
-
-
-class RiskRequest(BaseModel):
-    annual_vol: float = Field(default=0.25, ge=0.05, le=1.0)
-    capital: float = Field(default=10_000_000, ge=1_000_000, le=1_000_000_000)
-    risk_pct: float = Field(default=0.01, ge=0.001, le=0.05)
-    confidence: float = Field(default=0.95, ge=0.90, le=0.99)
-    atr_multiplier: float = Field(default=2.0, ge=1.0, le=5.0)
-
-
-class TVAlertRequest(BaseModel):
-    action: str = Field(default="buy", pattern="^(buy|sell)$")
-    ticker: str = Field(default="AAPL", max_length=20)
-    price: float = Field(default=0.0, ge=0.0)
-    rsi: float | None = Field(default=None)
-
-
-class CNNTimeSeriesRequest(BaseModel):
-    window: int = Field(default=20, ge=10, le=60, description="입력 창 길이 (거래일)")
-    n_samples: int = Field(default=2000, ge=500, le=10000, description="합성 데이터 샘플 수")
-    epochs: int = Field(default=20, ge=5, le=50, description="학습 에폭 수")
-
-
-class LSTMRequest(BaseModel):
-    seq_len: int = Field(default=30, ge=10, le=60, description="LSTM 입력 시퀀스 길이")
-    n_days: int = Field(default=2000, ge=500, le=5000, description="시뮬레이션 일수")
-    hidden_size: int = Field(default=64, ge=16, le=256, description="LSTM 은닉 유닛 수")
-    epochs: int = Field(default=30, ge=10, le=80, description="학습 에폭 수")
-
-
-class TransformerTSRequest(BaseModel):
-    seq_len: int = Field(default=40, ge=20, le=80, description="인코더 입력 창 길이")
-    pred_steps: int = Field(default=5, ge=1, le=10, description="예측 스텝 수")
-    d_model: int = Field(default=32, ge=16, le=128, description="Transformer d_model 차원")
-    epochs: int = Field(default=30, ge=10, le=80, description="학습 에폭 수")
 
 
 class DartCompanySearchRequest(BaseModel):
@@ -356,6 +171,96 @@ class DartCompanyListRequest(BaseModel):
 @app.get("/api/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _read_cpu_times() -> tuple[int, int]:
+    """Return total and idle CPU ticks from Linux procfs."""
+    with open("/proc/stat", encoding="utf-8") as proc_stat:
+        first_line = proc_stat.readline().split()
+    values = [int(value) for value in first_line[1:]]
+    total = sum(values)
+    # Linux reports idle and iowait separately; both mean the CPU was not
+    # executing application work for this interval.
+    idle = values[3] + (values[4] if len(values) > 4 else 0)
+    return total, idle
+
+
+def _memory_usage() -> tuple[int, int]:
+    """Return total and used memory bytes, preferring MemAvailable on Linux."""
+    meminfo: dict[str, int] = {}
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as proc_meminfo:
+            for line in proc_meminfo:
+                key, raw_value, *_ = line.split()
+                meminfo[key.rstrip(":")] = int(raw_value) * 1024
+        total = meminfo["MemTotal"]
+        available = meminfo.get("MemAvailable", meminfo.get("MemFree", 0))
+        return total, max(total - available, 0)
+    except (FileNotFoundError, KeyError, ValueError):
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        total = os.sysconf("SC_PHYS_PAGES") * page_size
+        available = os.sysconf("SC_AVPHYS_PAGES") * page_size
+        return total, max(total - available, 0)
+
+
+@app.get("/api/system/resources")
+def system_resources() -> dict[str, object]:
+    """Return host CPU, memory and root-disk utilization for the admin view."""
+    try:
+        total_before, idle_before = _read_cpu_times()
+        time.sleep(0.1)
+        total_after, idle_after = _read_cpu_times()
+        total_delta = total_after - total_before
+        idle_delta = idle_after - idle_before
+        cpu_used = 0.0 if total_delta <= 0 else (1 - idle_delta / total_delta) * 100
+
+        memory_total, memory_used = _memory_usage()
+        disk = os.statvfs("/")
+        disk_total = disk.f_frsize * disk.f_blocks
+        disk_free = disk.f_frsize * disk.f_bavail
+        disk_used = max(disk_total - disk_free, 0)
+
+        def usage(total: int, used: int) -> dict[str, int | float]:
+            percent = (used / total * 100) if total else 0.0
+            return {"total_bytes": total, "used_bytes": used,
+                    "free_bytes": max(total - used, 0), "used_percent": round(percent, 1)}
+
+        return {
+            "cpu": {"used_percent": round(max(0.0, min(cpu_used, 100.0)), 1),
+                    "logical_cores": os.cpu_count() or 1},
+            "memory": usage(memory_total, memory_used),
+            "disk": usage(disk_total, disk_used),
+            "disk_mount": "/",
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail=f"서버 리소스 정보를 읽을 수 없습니다: {exc}") from exc
+
+
+class VisitorHeartbeatRequest(BaseModel):
+    visitor_id: str = Field(min_length=16, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+@app.post("/api/visitors/heartbeat")
+def visitor_heartbeat(payload: VisitorHeartbeatRequest) -> dict[str, int]:
+    """Register one browser briefly and return the current active-browser count.
+
+    This is an in-memory presence indicator, not an analytics counter. A browser
+    remains active for 90 seconds after its latest heartbeat, so closed tabs
+    disappear without retaining personally identifiable visit history.
+    """
+    now = monotonic()
+    with _active_visitors_lock:
+        expired = [
+            visitor_id
+            for visitor_id, last_seen in _active_visitors.items()
+            if now - last_seen > ACTIVE_VISITOR_TTL_SECONDS
+        ]
+        for visitor_id in expired:
+            _active_visitors.pop(visitor_id, None)
+        _active_visitors[payload.visitor_id] = now
+        count = len(_active_visitors)
+    return {"active_visitors": count}
 
 
 @app.get("/api/learn/doc/{doc_id}")
@@ -697,1348 +602,6 @@ def dart_company_list(req: DartCompanyListRequest) -> dict[str, object]:
         "count":         len(results),
         "results":       results,
         "source":        "OpenDART company.json" + (" + empSttus.json" if use_emp else ""),
-    }
-
-
-@app.post("/api/ml/cross-validation")
-def cross_validation(req: CrossValidationRequest) -> dict[str, object]:
-    import numpy as np
-    from sklearn.datasets import make_classification
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.model_selection import cross_val_score
-
-    X, y = make_classification(
-        n_samples=req.n_samples,
-        n_features=req.n_features,
-        n_informative=max(2, req.n_features // 2),
-        n_redundant=max(1, req.n_features // 5),
-        n_classes=2,
-        random_state=42,
-    )
-
-    model = LogisticRegression(max_iter=1000)
-    scores = cross_val_score(model, X, y, cv=req.cv)
-    return {
-        "fold_scores": [float(s) for s in scores],
-        "mean_accuracy": float(np.mean(scores)),
-        "std_accuracy": float(np.std(scores)),
-    }
-
-
-@app.get("/api/ml/decision-boundary")
-def decision_boundary_image() -> dict[str, str]:
-    import matplotlib
-    import numpy as np
-    from sklearn.datasets import make_classification
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.model_selection import train_test_split
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    X, y = make_classification(
-        n_samples=240,
-        n_features=2,
-        n_redundant=0,
-        n_informative=2,
-        n_clusters_per_class=1,
-        random_state=42,
-    )
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
-
-    model = LogisticRegression()
-    model.fit(X_train, y_train)
-
-    x_min, x_max = X[:, 0].min() - 1, X[:, 0].max() + 1
-    y_min, y_max = X[:, 1].min() - 1, X[:, 1].max() + 1
-    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 400), np.linspace(y_min, y_max, 400))
-    Z = model.predict(np.c_[xx.ravel(), yy.ravel()]).reshape(xx.shape)
-
-    fig, ax = plt.subplots(figsize=(7, 5))
-    ax.contourf(xx, yy, Z, alpha=0.3, cmap=plt.cm.coolwarm)
-    ax.scatter(X_train[:, 0], X_train[:, 1], c=y_train, marker="o", edgecolors="k", label="Train")
-    ax.scatter(X_test[:, 0], X_test[:, 1], c=y_test, marker="x", label="Test")
-    ax.set_title("Decision Boundary")
-    ax.legend()
-    ax.grid(True)
-
-    buffer = io.BytesIO()
-    fig.tight_layout()
-    fig.savefig(buffer, format="png", dpi=140)
-    plt.close(fig)
-    image_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-    return {"image_base64": image_b64}
-
-
-@app.post("/api/ml/random-forest")
-def random_forest(req: RandomForestRequest) -> dict[str, object]:
-    import pandas as pd
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.metrics import accuracy_score, classification_report
-    from sklearn.model_selection import train_test_split
-
-    data = {
-        "age": [22, 45, 33, 35, 52, 23, 43, 56, 48, 29, 33, 53, 56, 58, 29],
-        "monthly_spend": [10, 200, 100, 150, 300, 15, 180, 400, 250, 35, 150, 300, 15, 180, 99],
-        "months_active": [1, 36, 24, 30, 60, 2, 33, 72, 50, 5, 33, 72, 50, 5, 12],
-        "churn": [1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1],
-    }
-
-    df = pd.DataFrame(data)
-    X = df[["age", "monthly_spend", "months_active"]]
-    y = df["churn"]
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=req.test_size, random_state=42)
-
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-
-    report = classification_report(y_test, y_pred, output_dict=True)
-    return {
-        "accuracy": float(accuracy_score(y_test, y_pred)),
-        "report": report,
-    }
-
-
-@app.post("/api/cv/circle-animation")
-def circle_animation(req: CircleAnimationRequest) -> dict[str, str]:
-    import cv2
-    import numpy as np
-
-    output_path = GENERATED_DIR / "circle_animation.mp4"
-
-    writer = cv2.VideoWriter(
-        str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), req.fps, (req.width, req.height)
-    )
-    for radius in list(np.linspace(20, min(req.width, req.height) // 3, 30)) + list(
-        np.linspace(min(req.width, req.height) // 3, 20, 30)
-    ):
-        image = np.zeros((req.height, req.width, 3), dtype=np.uint8)
-        image[:] = (255, 0, 0)
-        cv2.circle(image, (req.width // 2, req.height // 2), int(radius), (255, 255, 255), -1)
-        writer.write(image)
-
-    writer.release()
-    return {"video_url": "/files/circle_animation.mp4"}
-
-
-@app.post("/api/ml/kmeans")
-def kmeans_clustering(req: KMeansRequest) -> dict[str, object]:
-    import matplotlib
-    import numpy as np
-    from sklearn.cluster import KMeans
-    from sklearn.datasets import make_blobs
-    from sklearn.metrics import silhouette_score
-    from sklearn.preprocessing import StandardScaler
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    X, _ = make_blobs(
-        n_samples=req.n_samples,
-        centers=req.n_clusters,
-        cluster_std=req.cluster_std,
-        random_state=42,
-    )
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    kmeans = KMeans(n_clusters=req.n_clusters, random_state=42, n_init=10)
-    labels = kmeans.fit_predict(X_scaled)
-    centers = kmeans.cluster_centers_
-    sil = float(silhouette_score(X_scaled, labels))
-
-    # Elbow data
-    inertias = []
-    ks = list(range(2, min(req.n_clusters + 4, 10)))
-    for ki in ks:
-        km = KMeans(n_clusters=ki, random_state=42, n_init=10)
-        km.fit(X_scaled)
-        inertias.append(float(km.inertia_))
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    axes[0].scatter(X_scaled[:, 0], X_scaled[:, 1], c=labels, cmap="tab10", alpha=0.7, s=12)
-    axes[0].scatter(centers[:, 0], centers[:, 1], c="red", marker="X", s=200, zorder=5)
-    axes[0].set_title(f"KMeans (k={req.n_clusters})  Silhouette={sil:.3f}")
-    axes[0].grid(True)
-    axes[1].plot(ks, inertias, "bo-")
-    axes[1].set_xlabel("k")
-    axes[1].set_ylabel("Inertia")
-    axes[1].set_title("Elbow Method")
-    axes[1].grid(True)
-    plt.tight_layout()
-
-    buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", dpi=120)
-    plt.close(fig)
-
-    return {
-        "image_base64": base64.b64encode(buffer.getvalue()).decode(),
-        "silhouette_score": sil,
-        "inertia": float(kmeans.inertia_),
-        "elbow": {"ks": ks, "inertias": inertias},
-    }
-
-
-@app.post("/api/ml/svm")
-def svm_classifier(req: SVMRequest) -> dict[str, object]:
-    import matplotlib
-    import numpy as np
-    from sklearn.datasets import make_classification
-    from sklearn.inspection import DecisionBoundaryDisplay
-    from sklearn.metrics import accuracy_score, classification_report
-    from sklearn.model_selection import train_test_split
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.svm import SVC
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    X, y = make_classification(
-        n_samples=300, n_features=2, n_redundant=0, n_informative=2,
-        n_clusters_per_class=1, random_state=42,
-    )
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.3, random_state=42)
-
-    svm = SVC(kernel=req.kernel, C=req.C, gamma="scale", random_state=42)
-    svm.fit(X_train, y_train)
-    y_pred = svm.predict(X_test)
-    report = classification_report(y_test, y_pred, output_dict=True)
-    accuracy = float(accuracy_score(y_test, y_pred))
-    n_support = int(np.sum(svm.n_support_))
-
-    fig, ax = plt.subplots(figsize=(7, 5))
-    DecisionBoundaryDisplay.from_estimator(
-        svm, X_scaled, ax=ax, alpha=0.3, cmap=plt.cm.coolwarm, response_method="predict"
-    )
-    ax.scatter(X_train[:, 0], X_train[:, 1], c=y_train, cmap=plt.cm.coolwarm, edgecolors="k", s=25, label="Train")
-    ax.scatter(X_test[:, 0], X_test[:, 1], c=y_test, cmap=plt.cm.coolwarm, marker="^", edgecolors="k", s=25, label="Test")
-    ax.scatter(
-        svm.support_vectors_[:, 0], svm.support_vectors_[:, 1],
-        s=100, linewidth=1.5, facecolors="none", edgecolors="k", label="Support Vectors",
-    )
-    ax.set_title(f"SVM ({req.kernel} kernel, C={req.C})  Acc={accuracy:.3f}")
-    ax.legend(fontsize=8)
-    ax.grid(True)
-    plt.tight_layout()
-
-    buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", dpi=140)
-    plt.close(fig)
-
-    return {
-        "image_base64": base64.b64encode(buffer.getvalue()).decode(),
-        "accuracy": accuracy,
-        "n_support_vectors": n_support,
-        "report": report,
-    }
-
-
-@app.post("/api/ml/mlp")
-def mlp_classifier(req: MLPRequest) -> dict[str, object]:
-    import matplotlib
-    from sklearn.datasets import make_classification
-    from sklearn.metrics import accuracy_score, classification_report
-    from sklearn.model_selection import train_test_split
-    from sklearn.neural_network import MLPClassifier
-    from sklearn.preprocessing import StandardScaler
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    hidden_layers = tuple(int(x) for x in req.hidden_layers.split(","))
-
-    X, y = make_classification(
-        n_samples=req.n_samples, n_features=10, n_informative=6,
-        n_redundant=2, n_classes=2, random_state=42,
-    )
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
-
-    mlp = MLPClassifier(
-        hidden_layer_sizes=hidden_layers, activation="relu", solver="adam",
-        max_iter=req.max_iter, random_state=42,
-    )
-    mlp.fit(X_train, y_train)
-    y_pred = mlp.predict(X_test)
-    accuracy = float(accuracy_score(y_test, y_pred))
-    report = classification_report(y_test, y_pred, output_dict=True)
-
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(mlp.loss_curve_, linewidth=2, color="#2563eb")
-    ax.set_xlabel("Iteration")
-    ax.set_ylabel("Loss")
-    ax.set_title(f"MLP Loss Curve  (layers={hidden_layers})  Acc={accuracy:.3f}")
-    ax.grid(True)
-    plt.tight_layout()
-
-    buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", dpi=140)
-    plt.close(fig)
-
-    return {
-        "image_base64": base64.b64encode(buffer.getvalue()).decode(),
-        "accuracy": accuracy,
-        "n_iterations": mlp.n_iter_,
-        "report": report,
-    }
-
-
-@app.post("/api/ml/linear-regression")
-def linear_regression(req: LinearRegressionRequest) -> dict[str, object]:
-    import matplotlib
-    import numpy as np
-    from sklearn.linear_model import LinearRegression as LR
-    from sklearn.metrics import mean_squared_error, r2_score
-    from sklearn.pipeline import make_pipeline
-    from sklearn.preprocessing import PolynomialFeatures
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    rng = np.random.default_rng(42)
-    X = rng.uniform(0, 10, size=(req.n_samples, 1))
-    # True underlying function: mixture so poly can shine
-    y = sum(
-        c * X.ravel() ** i
-        for i, c in enumerate([10, -4, 0.5][: req.degree + 1])
-    ) + rng.normal(0, req.noise, req.n_samples)
-
-    model = make_pipeline(
-        PolynomialFeatures(degree=req.degree, include_bias=False),
-        LR(),
-    )
-    model.fit(X, y)
-    y_pred = model.predict(X)
-    r2 = float(r2_score(y, y_pred))
-    mse = float(mean_squared_error(y, y_pred))
-
-    X_plot = np.linspace(0, 10, 200).reshape(-1, 1)
-    y_plot = model.predict(X_plot)
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.scatter(X, y, alpha=0.4, s=15, label="Data")
-    ax.plot(X_plot, y_plot, "r-", linewidth=2, label=f"Poly degree={req.degree}")
-    ax.set_title(f"Regression (degree={req.degree})  R²={r2:.3f}  MSE={mse:.2f}")
-    ax.set_xlabel("X")
-    ax.set_ylabel("y")
-    ax.legend()
-    ax.grid(True)
-    plt.tight_layout()
-
-    buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", dpi=140)
-    plt.close(fig)
-
-    return {
-        "image_base64": base64.b64encode(buffer.getvalue()).decode(),
-        "r2_score": r2,
-        "mse": mse,
-        "degree": req.degree,
-    }
-
-
-@app.post("/api/nlp/text-classify")
-def text_classify(req: TextClassifyRequest) -> dict[str, object]:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.pipeline import make_pipeline
-
-    # Inline bilingual training corpus — sports vs. politics
-    _TRAIN_TEXTS = [
-        # Sports (label 0)
-        "The hockey team scored three goals in the final period to win the championship.",
-        "Basketball playoffs begin next week with exciting matchups across the league.",
-        "The pitcher threw a no-hitter in yesterday's baseball game.",
-        "Football season kicks off with record-breaking ticket sales.",
-        "The swimmer broke the world record in the 100m freestyle at the Olympics.",
-        "Tennis star wins Grand Slam after coming back from injury.",
-        "Ice hockey league announces expansion teams in new cities.",
-        "The marathon runner finished in record time despite difficult conditions.",
-        "Soccer World Cup qualifying matches start this weekend.",
-        "Gold medals were awarded in gymnastics and rowing at the games.",
-        # Politics (label 1)
-        "The senator proposed a new budget policy for healthcare reform.",
-        "Parliament voted on the controversial immigration bill last night.",
-        "The president signed an executive order on environmental regulations.",
-        "Political debates are heating up ahead of the upcoming election.",
-        "The government announced a new economic stimulus package.",
-        "Opposition leaders called for an emergency session of parliament.",
-        "Tax reform legislation passed the Senate with bipartisan support.",
-        "Foreign policy discussions dominated the United Nations summit.",
-        "The prime minister addressed the nation about the economic crisis.",
-        "Congressional hearings on data privacy began on Monday.",
-    ]
-    _TRAIN_LABELS = [0] * 10 + [1] * 10
-    _LABEL_NAMES = ["rec.sport", "politics"]
-
-    pipe = make_pipeline(
-        TfidfVectorizer(max_features=req.max_features, ngram_range=(1, 2), stop_words="english"),
-        LogisticRegression(max_iter=1000),
-    )
-    pipe.fit(_TRAIN_TEXTS, _TRAIN_LABELS)
-
-    predictions = []
-    for text in req.texts:
-        pred_idx = int(pipe.predict([text])[0])
-        prob = pipe.predict_proba([text])[0]
-        predictions.append({
-            "text": text[:200],
-            "label": _LABEL_NAMES[pred_idx],
-            "confidence": float(prob[pred_idx]),
-        })
-
-    return {"predictions": predictions, "categories": _LABEL_NAMES}
-
-
-@app.post("/api/genai/text-to-image")
-def text_to_image(req: DiffusionRequest) -> dict[str, str]:
-    try:
-        import torch
-        from diffusers import StableDiffusionPipeline
-    except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=503, detail=f"Missing dependency: {exc}") from exc
-
-    if not torch.cuda.is_available():
-        raise HTTPException(status_code=503, detail="CUDA GPU is not available in this environment.")
-
-    model_id = os.getenv("DIFFUSERS_MODEL_ID", "runwayml/stable-diffusion-v1-5")
-    pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16).to("cuda")
-
-    image = pipe(
-        req.prompt,
-        guidance_scale=req.guidance_scale,
-        height=req.height,
-        width=req.width,
-    ).images[0]
-
-    output_path = GENERATED_DIR / "diffusion_result.png"
-    image.save(output_path)
-    return {"image_url": "/files/diffusion_result.png"}
-
-
-@app.get("/files/{file_name}")
-def get_generated_file(file_name: str) -> FileResponse:
-    target = GENERATED_DIR / file_name
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(path=target)
-
-
-@app.post("/api/dl/cnn-timeseries")
-def cnn_timeseries(req: CNNTimeSeriesRequest) -> dict[str, object]:
-    """
-    1D CNN으로 주가 패턴(상승·횡보·하락)을 분류합니다. (Day036 대응)
-    """
-    try:
-        import torch
-        import torch.nn as nn
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Missing dependency: {exc}") from exc
-
-    import numpy as np
-    from sklearn.model_selection import train_test_split
-    from sklearn.preprocessing import StandardScaler
-
-    SEED = 42
-    rng_ = np.random.default_rng(SEED)
-
-    windows, labels = [], []
-    for _ in range(req.n_samples):
-        mu_ = rng_.uniform(-0.0003, 0.0003)
-        sigma_ = rng_.uniform(0.01, 0.025)
-        returns = rng_.normal(mu_, sigma_, req.window + 1)
-        prices = 100 * np.exp(np.cumsum(returns))
-        next_ret = (prices[req.window] - prices[req.window - 1]) / prices[req.window - 1]
-        windows.append(prices[: req.window])
-        labels.append(2 if next_ret > 0.01 else (0 if next_ret < -0.01 else 1))
-
-    X_raw = np.array(windows, dtype=np.float32)
-    y_arr = np.array(labels, dtype=np.int64)
-    X_norm = StandardScaler().fit_transform(X_raw).astype(np.float32)
-    X_tr, X_te, y_tr, y_te = train_test_split(X_norm, y_arr, test_size=0.2, stratify=y_arr, random_state=SEED)
-
-    Xtr = torch.tensor(X_tr).unsqueeze(1)
-    Xte = torch.tensor(X_te).unsqueeze(1)
-    ytr = torch.tensor(y_tr)
-    yte = torch.tensor(y_te)
-
-    class _CNN1D(nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.net = nn.Sequential(
-                nn.Conv1d(1, 32, 3, padding=1), nn.ReLU(),
-                nn.Conv1d(32, 64, 3, padding=1), nn.ReLU(),
-                nn.AdaptiveAvgPool1d(1), nn.Flatten(),
-                nn.Linear(64, 32), nn.ReLU(), nn.Dropout(0.3), nn.Linear(32, 3),
-            )
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            return self.net(x)
-
-    torch.manual_seed(SEED)
-    model = _CNN1D()
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
-    crit = nn.CrossEntropyLoss()
-    ds = torch.utils.data.TensorDataset(Xtr, ytr)
-    dl = torch.utils.data.DataLoader(ds, batch_size=64, shuffle=True)
-
-    train_acc_hist = []
-    for _ in range(req.epochs):
-        model.train()
-        correct, total = 0, 0
-        for xb, yb in dl:
-            opt.zero_grad()
-            out = model(xb)
-            loss = crit(out, yb)
-            loss.backward()
-            opt.step()
-            correct += (out.argmax(1) == yb).sum().item()
-            total += len(yb)
-        train_acc_hist.append(correct / total)
-
-    model.eval()
-    with torch.no_grad():
-        val_preds = model(Xte).argmax(1).numpy()
-    val_acc = float(np.mean(val_preds == y_te))
-
-    label_names = ["하락", "횡보", "상승"]
-    class_counts = {label_names[i]: int(np.sum(val_preds == i)) for i in range(3)}
-
-    return {
-        "val_accuracy": val_acc,
-        "train_accuracy_final": float(train_acc_hist[-1]),
-        "predicted_class_counts": class_counts,
-        "train_accuracy_history": [round(a, 4) for a in train_acc_hist],
-    }
-
-
-@app.post("/api/dl/lstm-predictor")
-def lstm_predictor(req: LSTMRequest) -> dict[str, object]:
-    """
-    LSTM으로 다음 날 주가 수익률을 예측합니다. (Day037 대응)
-    """
-    try:
-        import torch
-        import torch.nn as nn
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Missing dependency: {exc}") from exc
-
-    import numpy as np
-    from sklearn.preprocessing import StandardScaler
-
-    SEED = 42
-    rng_ = np.random.default_rng(SEED)
-    daily_ret = rng_.normal(0.0002, 0.015, req.n_days)
-    prices = 1000 * np.exp(np.cumsum(daily_ret))
-    returns = (np.diff(prices) / prices[:-1]).astype(np.float32)
-
-    def _make_seq(series: np.ndarray, seq_len: int):
-        X_, y_ = [], []
-        for i in range(len(series) - seq_len):
-            X_.append(series[i : i + seq_len])
-            y_.append(series[i + seq_len])
-        return np.array(X_, dtype=np.float32), np.array(y_, dtype=np.float32)
-
-    scaler_X = StandardScaler()
-    scaler_y = StandardScaler()
-    X_raw, y_raw = _make_seq(returns, req.seq_len)
-    X_norm = scaler_X.fit_transform(X_raw).astype(np.float32)
-    y_norm = scaler_y.fit_transform(y_raw.reshape(-1, 1)).ravel().astype(np.float32)
-
-    split = int(len(X_norm) * 0.8)
-    Xtr = torch.tensor(X_norm[:split]).unsqueeze(-1)
-    Xte = torch.tensor(X_norm[split:]).unsqueeze(-1)
-    ytr = torch.tensor(y_norm[:split])
-    yte_raw = y_raw[split:]
-
-    class _LSTM(nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.lstm = nn.LSTM(1, req.hidden_size, 2, batch_first=True, dropout=0.2)
-            self.fc = nn.Sequential(nn.Linear(req.hidden_size, 32), nn.ReLU(), nn.Linear(32, 1))
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            out, _ = self.lstm(x)
-            return self.fc(out[:, -1, :]).squeeze(-1)
-
-    torch.manual_seed(SEED)
-    model = _LSTM()
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
-    crit = nn.MSELoss()
-    ds = torch.utils.data.TensorDataset(Xtr, ytr)
-    dl = torch.utils.data.DataLoader(ds, batch_size=64, shuffle=True)
-    val_losses = []
-
-    for _ in range(req.epochs):
-        model.train()
-        for xb, yb in dl:
-            opt.zero_grad()
-            loss = crit(model(xb), yb)
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
-        model.eval()
-        with torch.no_grad():
-            vl = crit(model(Xte), torch.tensor(y_norm[split:])).item()
-        val_losses.append(float(vl))
-
-    model.eval()
-    with torch.no_grad():
-        y_pred_norm = model(Xte).numpy()
-    y_pred_raw = scaler_y.inverse_transform(y_pred_norm.reshape(-1, 1)).ravel()
-    dir_acc = float(np.mean(np.sign(y_pred_raw) == np.sign(yte_raw)))
-
-    return {
-        "direction_accuracy": dir_acc,
-        "val_loss_final": val_losses[-1],
-        "val_loss_history": [round(v, 6) for v in val_losses],
-    }
-
-
-@app.post("/api/dl/transformer-timeseries")
-def transformer_timeseries(req: TransformerTSRequest) -> dict[str, object]:
-    """
-    Transformer Encoder로 멀티스텝 주가를 예측합니다. (Day038-039 대응)
-    """
-    try:
-        import math
-        import torch
-        import torch.nn as nn
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Missing dependency: {exc}") from exc
-
-    import numpy as np
-    from sklearn.preprocessing import MinMaxScaler
-
-    SEED = 42
-    rng_ = np.random.default_rng(SEED)
-    t = np.arange(2500)
-    seasonal = 0.02 * np.sin(2 * np.pi * t / 252)
-    log_returns = 0.0001 + seasonal * 0.005 + rng_.normal(0, 0.012, 2500)
-    prices = 1000 * np.exp(np.cumsum(log_returns))
-    scaler_ = MinMaxScaler()
-    prices_norm = scaler_.fit_transform(prices.reshape(-1, 1)).ravel().astype(np.float32)
-
-    X_list, y_list = [], []
-    for i in range(len(prices_norm) - req.seq_len - req.pred_steps):
-        X_list.append(prices_norm[i : i + req.seq_len])
-        y_list.append(prices_norm[i + req.seq_len : i + req.seq_len + req.pred_steps])
-    X_all = np.array(X_list, dtype=np.float32)
-    y_all = np.array(y_list, dtype=np.float32)
-
-    split = int(len(X_all) * 0.8)
-    Xtr = torch.tensor(X_all[:split]).unsqueeze(-1)
-    Xte = torch.tensor(X_all[split:]).unsqueeze(-1)
-    ytr = torch.tensor(y_all[:split])
-    yte = torch.tensor(y_all[split:])
-
-    class _PE(nn.Module):
-        def __init__(self, d: int, max_len: int = 200) -> None:
-            super().__init__()
-            pe = torch.zeros(max_len, d)
-            pos = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-            div = torch.exp(torch.arange(0, d, 2, dtype=torch.float) * (-math.log(10000.0) / d))
-            pe[:, 0::2] = torch.sin(pos * div)
-            pe[:, 1::2] = torch.cos(pos * div)
-            self.register_buffer("pe", pe.unsqueeze(0))
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            return x + self.pe[:, : x.size(1), :]
-
-    class _TransformerModel(nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.proj = nn.Linear(1, req.d_model)
-            self.pe = _PE(req.d_model)
-            nhead = max(1, req.d_model // 8)
-            enc_layer = nn.TransformerEncoderLayer(
-                d_model=req.d_model, nhead=nhead,
-                dim_feedforward=req.d_model * 4, dropout=0.1, batch_first=True,
-            )
-            self.enc = nn.TransformerEncoder(enc_layer, num_layers=2)
-            self.head = nn.Linear(req.d_model, req.pred_steps)
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            x = self.pe(self.proj(x))
-            return self.head(self.enc(x)[:, -1, :])
-
-    torch.manual_seed(SEED)
-    model = _TransformerModel()
-    opt = torch.optim.AdamW(model.parameters(), lr=5e-4)
-    crit = nn.MSELoss()
-    ds = torch.utils.data.TensorDataset(Xtr, ytr)
-    dl = torch.utils.data.DataLoader(ds, batch_size=64, shuffle=True)
-    val_losses = []
-
-    for _ in range(req.epochs):
-        model.train()
-        for xb, yb in dl:
-            opt.zero_grad()
-            loss = crit(model(xb), yb)
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
-        model.eval()
-        with torch.no_grad():
-            vl = crit(model(Xte), yte).item()
-        val_losses.append(float(vl))
-
-    model.eval()
-    with torch.no_grad():
-        y_pred = model(Xte).numpy()
-
-    y_pred_orig = scaler_.inverse_transform(y_pred[:, 0].reshape(-1, 1)).ravel()
-    y_true_orig = scaler_.inverse_transform(yte[:, 0].numpy().reshape(-1, 1)).ravel()
-    last_input = scaler_.inverse_transform(X_all[split:, -1].reshape(-1, 1)).ravel()
-    dir_acc = float(np.mean(np.sign(y_pred_orig - last_input) == np.sign(y_true_orig - last_input)))
-
-    return {
-        "direction_accuracy_step1": dir_acc,
-        "val_loss_final": val_losses[-1],
-        "val_loss_history": [round(v, 6) for v in val_losses],
-    }
-
-
-# ─── Quant Strategy Models ────────────────────────────────────────────────────
-
-class BacktestRequest(BaseModel):
-    fast_ma: int = Field(default=20, ge=5, le=60)
-    slow_ma: int = Field(default=60, ge=20, le=200)
-    n_days: int = Field(default=1260, ge=252, le=5040)
-
-
-class PortfolioRequest(BaseModel):
-    n_simulations: int = Field(default=3000, ge=500, le=10000)
-    risk_free: float = Field(default=0.03, ge=0.0, le=0.1)
-
-
-class RiskRequest(BaseModel):
-    confidence: float = Field(default=0.95, ge=0.90, le=0.99)
-    n_scenarios: int = Field(default=10000, ge=1000, le=100000)
-    portfolio_value: float = Field(default=100_000_000, ge=1_000_000)
-
-
-class PipelineRequest(BaseModel):
-    ticker: str = Field(default="SPY")
-    fast_ma: int = Field(default=20, ge=5, le=60)
-    slow_ma: int = Field(default=60, ge=20, le=200)
-
-
-class FinancialKnowledgeRequest(BaseModel):
-    focus: str = Field(default="balanced", pattern="^(balanced|products|allocation)$")
-    n_simulations: int = Field(default=3000, ge=500, le=10000)
-    risk_free: float = Field(default=0.03, ge=0.0, le=0.1)
-
-
-# ─── Quant Endpoints ──────────────────────────────────────────────────────────
-
-@app.post("/api/quant/backtest")
-def quant_backtest(req: BacktestRequest) -> dict[str, object]:
-    """MA 크로스오버 전략 백테스트 (Day041·57 대응)"""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import matplotlib.gridspec as gridspec
-    import numpy as np
-    import pandas as pd
-    configure_matplotlib_korean_font(plt)
-
-    rng = np.random.default_rng(42)
-    dt = 1 / 252
-    mu, sigma = 0.08, 0.20
-    daily_r = rng.normal((mu - 0.5 * sigma**2) * dt, sigma * np.sqrt(dt), req.n_days)
-    prices = pd.Series(
-        100 * np.exp(np.cumsum(daily_r)),
-        index=pd.date_range("2020-01-01", periods=req.n_days, freq="B"),
-        name="Close",
-    )
-
-    df = pd.DataFrame({"Close": prices})
-    df["MA_fast"] = df["Close"].rolling(req.fast_ma).mean()
-    df["MA_slow"] = df["Close"].rolling(req.slow_ma).mean()
-    df["Signal"] = (df["MA_fast"] > df["MA_slow"]).astype(float)
-    df["Position"] = df["Signal"].shift(1).fillna(0)
-    df["Ret"] = df["Close"].pct_change()
-    df["Strat_Ret"] = df["Position"] * df["Ret"]
-    df["BH_Ret"] = df["Ret"]
-    df["Strat_Cum"] = (1 + df["Strat_Ret"]).cumprod()
-    df["BH_Cum"] = (1 + df["BH_Ret"]).cumprod()
-    df = df.dropna()
-
-    ret = df["Strat_Ret"]
-    n_years = len(ret) / 252
-    cum = df["Strat_Cum"]
-    cagr = float(cum.iloc[-1] ** (1 / n_years) - 1) if n_years > 0 else 0
-    excess = ret - 0.03 / 252
-    sharpe = float(excess.mean() / excess.std() * np.sqrt(252)) if excess.std() > 0 else 0
-    rolling_max = cum.cummax()
-    dd = (cum - rolling_max) / rolling_max
-    mdd = float(dd.min())
-    wins = ret[ret > 0]
-    losses = ret[ret < 0]
-    win_rate = len(wins) / max(len(ret[ret != 0]), 1)
-    pf = float(wins.sum() / abs(losses.sum())) if len(losses) > 0 and losses.sum() != 0 else 9.99
-    n_trades = int(df["Position"].diff().abs()[lambda x: x > 0].count())
-    total_ret = float(cum.iloc[-1] - 1)
-    bh_ret = float(df["BH_Cum"].iloc[-1] - 1)
-
-    fig = plt.figure(figsize=(14, 9), facecolor="#0f172a")
-    gs = gridspec.GridSpec(3, 2, figure=fig, hspace=0.45, wspace=0.3)
-    text_c = "#e2e8f0"
-    grid_c = "#1e293b"
-
-    for ax in [fig.add_subplot(gs[r, c]) for r in range(3) for c in range(2)]:
-        ax.set_facecolor("#1e293b")
-    plt.clf()
-
-    ax1 = fig.add_subplot(gs[0, :])
-    ax1.set_facecolor("#1e293b")
-    ax1.plot(df.index, df["Close"], color="#64748b", lw=0.8, label="주가")
-    ax1.plot(df.index, df["MA_fast"], color="#3b82f6", lw=1.5, label=f"MA{req.fast_ma}")
-    ax1.plot(df.index, df["MA_slow"], color="#f97316", lw=1.5, label=f"MA{req.slow_ma}")
-    buy_m = (df["Position"] == 1) & (df["Position"].shift(1) == 0)
-    sell_m = (df["Position"] == 0) & (df["Position"].shift(1) == 1)
-    ax1.scatter(df.index[buy_m], df["Close"][buy_m], marker="^", color="#22c55e", s=50, zorder=5, label="매수")
-    ax1.scatter(df.index[sell_m], df["Close"][sell_m], marker="v", color="#ef4444", s=50, zorder=5, label="매도")
-    ax1.set_title(f"MA 크로스오버 전략 (MA{req.fast_ma}/MA{req.slow_ma})", color=text_c, fontsize=11, fontweight="bold")
-    ax1.legend(fontsize=8, ncol=5, labelcolor=text_c, facecolor="#0f172a")
-    ax1.tick_params(colors=text_c); ax1.spines[:].set_color(grid_c)
-    ax1.grid(True, alpha=0.2, color=grid_c)
-
-    ax2 = fig.add_subplot(gs[1, :])
-    ax2.set_facecolor("#1e293b")
-    ax2.plot(df.index, df["Strat_Cum"], color="#3b82f6", lw=2, label=f"전략 ({total_ret:+.1%})")
-    ax2.plot(df.index, df["BH_Cum"], color="#94a3b8", lw=2, ls="--", label=f"Buy & Hold ({bh_ret:+.1%})")
-    ax2.axhline(1.0, color="#475569", lw=0.6)
-    ax2.set_title("누적 수익률 비교", color=text_c, fontsize=11)
-    ax2.legend(fontsize=9, labelcolor=text_c, facecolor="#0f172a")
-    ax2.tick_params(colors=text_c); ax2.spines[:].set_color(grid_c)
-    ax2.grid(True, alpha=0.2, color=grid_c)
-
-    ax3 = fig.add_subplot(gs[2, 0])
-    ax3.set_facecolor("#1e293b")
-    ax3.fill_between(df.index, dd * 100, 0, color="#ef4444", alpha=0.5)
-    ax3.set_title("낙폭 Drawdown (%)", color=text_c, fontsize=11)
-    ax3.tick_params(colors=text_c); ax3.spines[:].set_color(grid_c)
-    ax3.grid(True, alpha=0.2, color=grid_c)
-
-    ax4 = fig.add_subplot(gs[2, 1])
-    ax4.set_facecolor("#1e293b")
-    ax4.axis("off")
-    rows = [
-        ["전략 총수익률", f"{total_ret:+.1%}"],
-        ["B&H 수익률", f"{bh_ret:+.1%}"],
-        ["CAGR", f"{cagr:+.2%}"],
-        ["Sharpe", f"{sharpe:.2f}"],
-        ["MDD", f"{mdd:.1%}"],
-        ["승률", f"{win_rate:.1%}"],
-        ["손익비", f"{pf:.2f}"],
-        ["거래횟수", f"{n_trades}회"],
-    ]
-    tbl = ax4.table(cellText=rows, colLabels=["지표", "값"], loc="center", bbox=[0, 0, 1, 1])
-    tbl.auto_set_font_size(False); tbl.set_fontsize(9)
-    for (r, c), cell in tbl.get_celld().items():
-        cell.set_facecolor("#0f172a" if r == 0 else "#1e293b")
-        cell.set_text_props(color=text_c)
-        cell.set_edgecolor(grid_c)
-    ax4.set_title("성과 요약", color=text_c, fontsize=11)
-
-    fig.patch.set_facecolor("#0f172a")
-    plt.suptitle("백테스트 결과 — MA 크로스오버 전략", color=text_c, fontsize=13, fontweight="bold", y=1.01)
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=130, bbox_inches="tight", facecolor="#0f172a")
-    plt.close(fig)
-    return {
-        "image": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
-        "metrics": {"cagr": round(cagr, 4), "sharpe": round(sharpe, 2), "mdd": round(mdd, 4),
-                    "win_rate": round(win_rate, 4), "profit_factor": round(pf, 2),
-                    "n_trades": n_trades, "total_return": round(total_ret, 4), "bh_return": round(bh_ret, 4)},
-    }
-
-
-@app.post("/api/quant/portfolio")
-def quant_portfolio(req: PortfolioRequest) -> dict[str, object]:
-    """포트폴리오 최적화 — 효율적 프론티어 + Sharpe 극대화 (Day57·76·77 대응)"""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import numpy as np
-    configure_matplotlib_korean_font(plt)
-
-    tickers = ["KOSPI", "S&P500", "국채10Y", "금(Gold)", "BTC"]
-    mu_ann = np.array([0.10, 0.12, 0.04, 0.07, 0.30])
-    vol_ann = np.array([0.18, 0.17, 0.06, 0.15, 0.70])
-    corr = np.array([
-        [1.00, 0.75, 0.10, 0.10, 0.20],
-        [0.75, 1.00, 0.05, 0.05, 0.25],
-        [0.10, 0.05, 1.00, 0.20, 0.00],
-        [0.10, 0.05, 0.20, 1.00, 0.05],
-        [0.20, 0.25, 0.00, 0.05, 1.00],
-    ])
-    cov = np.outer(vol_ann, vol_ann) * corr
-    n = len(tickers)
-    rng = np.random.default_rng(42)
-    rf = req.risk_free
-
-    port_rets, port_vols, port_sharpes = [], [], []
-    all_weights = []
-    for _ in range(req.n_simulations):
-        w = rng.random(n); w /= w.sum()
-        r = float(w @ mu_ann)
-        v = float(np.sqrt(w @ cov @ w))
-        port_rets.append(r); port_vols.append(v)
-        port_sharpes.append((r - rf) / v)
-        all_weights.append(w)
-
-    port_rets = np.array(port_rets)
-    port_vols = np.array(port_vols)
-    port_sharpes = np.array(port_sharpes)
-    all_weights = np.array(all_weights)
-
-    best_i = int(np.argmax(port_sharpes))
-    best_w = all_weights[best_i]
-
-    # Risk-parity weights (equal risk contribution approx)
-    inv_vol = 1 / vol_ann; rp_w = inv_vol / inv_vol.sum()
-    rp_r = float(rp_w @ mu_ann); rp_v = float(np.sqrt(rp_w @ cov @ rp_w))
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor="#0f172a")
-    text_c = "#e2e8f0"; grid_c = "#1e293b"
-
-    ax = axes[0]; ax.set_facecolor("#1e293b")
-    sc = ax.scatter(port_vols * 100, port_rets * 100, c=port_sharpes, cmap="RdYlGn",
-                    s=4, alpha=0.6)
-    ax.scatter(port_vols[best_i] * 100, port_rets[best_i] * 100,
-               marker="*", color="#fbbf24", s=300, zorder=10, label=f"최적(Sharpe={port_sharpes[best_i]:.2f})")
-    ax.scatter(rp_v * 100, rp_r * 100, marker="D", color="#22d3ee", s=120, zorder=10, label="Risk-Parity")
-    for i, tk in enumerate(tickers):
-        ax.scatter(vol_ann[i] * 100, mu_ann[i] * 100, marker="o", s=80, zorder=10)
-        ax.annotate(tk, (vol_ann[i] * 100, mu_ann[i] * 100), textcoords="offset points",
-                    xytext=(5, 3), color=text_c, fontsize=8)
-    cbar = plt.colorbar(sc, ax=ax); cbar.set_label("Sharpe Ratio", color=text_c)
-    cbar.ax.yaxis.set_tick_params(color=text_c)
-    plt.setp(cbar.ax.yaxis.get_ticklabels(), color=text_c)
-    ax.set_xlabel("리스크 (변동성 %)", color=text_c); ax.set_ylabel("기대수익률 (%)", color=text_c)
-    ax.set_title("효율적 프론티어", color=text_c, fontsize=12, fontweight="bold")
-    ax.legend(fontsize=8, labelcolor=text_c, facecolor="#0f172a")
-    ax.tick_params(colors=text_c); ax.spines[:].set_color(grid_c)
-    ax.grid(True, alpha=0.2, color=grid_c)
-
-    ax2 = axes[1]; ax2.set_facecolor("#1e293b")
-    colors = ["#3b82f6", "#22c55e", "#f97316", "#fbbf24", "#a78bfa"]
-    bars = ax2.bar(tickers, best_w * 100, color=colors, alpha=0.85, edgecolor=grid_c)
-    for bar, val in zip(bars, best_w):
-        ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
-                 f"{val:.1%}", ha="center", va="bottom", color=text_c, fontsize=9, fontweight="bold")
-    ax2.set_title(f"최적 포트폴리오 비중 (Sharpe={port_sharpes[best_i]:.2f})", color=text_c, fontsize=12, fontweight="bold")
-    ax2.set_ylabel("비중 (%)", color=text_c)
-    ax2.tick_params(colors=text_c); ax2.spines[:].set_color(grid_c)
-    ax2.set_facecolor("#1e293b"); ax2.grid(True, alpha=0.2, color=grid_c, axis="y")
-
-    fig.patch.set_facecolor("#0f172a")
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=130, bbox_inches="tight", facecolor="#0f172a")
-    plt.close(fig)
-
-    return {
-        "image": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
-        "optimal_weights": {tk: round(float(w), 4) for tk, w in zip(tickers, best_w)},
-        "optimal_return": round(float(port_rets[best_i]), 4),
-        "optimal_vol": round(float(port_vols[best_i]), 4),
-        "optimal_sharpe": round(float(port_sharpes[best_i]), 4),
-        "riskparity_weights": {tk: round(float(w), 4) for tk, w in zip(tickers, rp_w)},
-    }
-
-
-@app.post("/api/quant/financial-knowledge")
-def quant_financial_knowledge(req: FinancialKnowledgeRequest) -> dict[str, object]:
-    """모듈 8 — 금융상품 이해와 자산배분방법론 5일 커리큘럼 점검/실습."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import numpy as np
-    configure_matplotlib_korean_font(plt)
-
-    coverage = [
-        {
-            "day": "Day 052",
-            "topic": "주식/ETF 상품",
-            "document": "docs/37.md",
-            "coverage": 0.96,
-            "web_status": "보완됨",
-            "items": ["주식/ETF 개요", "ETF 운용 전략", "성과 비교"],
-        },
-        {
-            "day": "Day 053",
-            "topic": "채권 상품",
-            "document": "docs/37.md",
-            "coverage": 0.88,
-            "web_status": "보완됨",
-            "items": ["채권 개요", "듀레이션", "수익률 곡선", "운용 전략"],
-        },
-        {
-            "day": "Day 054",
-            "topic": "파생상품",
-            "document": "docs/38.md",
-            "coverage": 0.86,
-            "web_status": "보완됨",
-            "items": ["선물", "옵션", "스왑", "헤징 전략"],
-        },
-        {
-            "day": "Day 055",
-            "topic": "포트폴리오 이론",
-            "document": "docs/39.md",
-            "coverage": 0.94,
-            "web_status": "기존+보완",
-            "items": ["MPT", "성과분석", "MDD", "Sharpe", "Sortino"],
-        },
-        {
-            "day": "Day 056",
-            "topic": "자산배분 모델",
-            "document": "docs/40.md",
-            "coverage": 0.92,
-            "web_status": "기존+보완",
-            "items": ["평균분산", "블랙-리터만", "Risk-Parity", "사례 분석"],
-        },
-    ]
-
-    rng = np.random.default_rng(7)
-    n_days = 252
-    asset_names = ["주식/ETF", "채권", "원자재", "현금"]
-    mu = np.array([0.10, 0.04, 0.06, 0.025])
-    vol = np.array([0.19, 0.07, 0.16, 0.01])
-    corr = np.array([
-        [1.00, -0.10, 0.25, 0.00],
-        [-0.10, 1.00, 0.05, 0.00],
-        [0.25, 0.05, 1.00, 0.00],
-        [0.00, 0.00, 0.00, 1.00],
-    ])
-    cov = np.outer(vol, vol) * corr
-    daily_mean = mu / 252
-    daily_cov = cov / 252
-    returns = rng.multivariate_normal(daily_mean, daily_cov, n_days)
-    curves = np.cumprod(1 + returns, axis=0)
-
-    inv_vol = 1 / vol
-    risk_parity_w = inv_vol / inv_vol.sum()
-    sixty_forty_w = np.array([0.60, 0.35, 0.00, 0.05])
-    market_w = np.array([0.50, 0.30, 0.15, 0.05])
-    investor_view = np.array([0.005, 0.000, 0.006, 0.000])
-    black_litterman_return = (mu * 0.75) + ((mu + investor_view) * 0.25)
-
-    port_rets, port_vols, sharpes, weights = [], [], [], []
-    for _ in range(req.n_simulations):
-        w = rng.random(len(asset_names))
-        w = w / w.sum()
-        r = float(w @ mu)
-        v = float(np.sqrt(w.T @ cov @ w))
-        s = (r - req.risk_free) / v
-        port_rets.append(r)
-        port_vols.append(v)
-        sharpes.append(s)
-        weights.append(w)
-
-    port_rets = np.array(port_rets)
-    port_vols = np.array(port_vols)
-    sharpes = np.array(sharpes)
-    weights = np.array(weights)
-    best_i = int(np.argmax(sharpes))
-    mean_variance_w = weights[best_i]
-    black_litterman_w = black_litterman_return / black_litterman_return.sum()
-
-    def metrics(w: np.ndarray) -> dict[str, float]:
-        portfolio_daily = returns @ w
-        cumulative = np.cumprod(1 + portfolio_daily)
-        cagr = float(cumulative[-1] ** (252 / len(cumulative)) - 1)
-        annual_vol = float(np.std(portfolio_daily) * np.sqrt(252))
-        mdd = float(np.min(cumulative / np.maximum.accumulate(cumulative) - 1))
-        downside = portfolio_daily[portfolio_daily < 0]
-        downside_vol = float(np.std(downside) * np.sqrt(252)) if len(downside) else annual_vol
-        sharpe = float((cagr - req.risk_free) / annual_vol) if annual_vol else 0.0
-        sortino = float((cagr - req.risk_free) / downside_vol) if downside_vol else 0.0
-        return {
-            "cagr": round(cagr, 4),
-            "volatility": round(annual_vol, 4),
-            "mdd": round(mdd, 4),
-            "sharpe": round(sharpe, 3),
-            "sortino": round(sortino, 3),
-        }
-
-    strategies = {
-        "60/40 사례": sixty_forty_w,
-        "평균분산": mean_variance_w,
-        "블랙-리터만": black_litterman_w,
-        "Risk-Parity": risk_parity_w,
-    }
-
-    strategy_payload = {
-        name: {
-            "weights": {asset: round(float(weight), 4) for asset, weight in zip(asset_names, w)},
-            "metrics": metrics(w),
-        }
-        for name, w in strategies.items()
-    }
-
-    spots = np.linspace(70, 130, 121)
-    call = np.maximum(spots - 100, 0) - 5
-    put = np.maximum(100 - spots, 0) - 4
-    straddle = call + put
-    tenors = ["3M", "2Y", "5Y", "10Y", "30Y"]
-    yields = np.array([4.6, 4.3, 4.0, 4.1, 4.25])
-
-    text_c = "#e2e8f0"; grid_c = "#334155"
-    fig, axes = plt.subplots(2, 2, figsize=(14, 9), facecolor="#0f172a")
-
-    ax = axes[0, 0]; ax.set_facecolor("#1e293b")
-    for i, name in enumerate(asset_names):
-        ax.plot(curves[:, i] * 100, label=name, linewidth=1.4)
-    ax.set_title("금융상품 이해: 자산군별 누적 성과", color=text_c, fontweight="bold")
-    ax.set_ylabel("기준가", color=text_c)
-    ax.legend(fontsize=8, labelcolor=text_c, facecolor="#0f172a")
-    ax.tick_params(colors=text_c); ax.grid(True, alpha=0.2, color=grid_c)
-    ax.spines[:].set_color(grid_c)
-
-    ax = axes[0, 1]; ax.set_facecolor("#1e293b")
-    sc = ax.scatter(port_vols * 100, port_rets * 100, c=sharpes, cmap="viridis", s=5, alpha=0.55)
-    ax.scatter(port_vols[best_i] * 100, port_rets[best_i] * 100, marker="*", s=260, color="#fbbf24", label="평균분산")
-    rp_r = float(risk_parity_w @ mu); rp_v = float(np.sqrt(risk_parity_w.T @ cov @ risk_parity_w))
-    ax.scatter(rp_v * 100, rp_r * 100, marker="D", s=110, color="#22c55e", label="Risk-Parity")
-    ax.set_title("자산배분방법론: 효율적 투자선", color=text_c, fontweight="bold")
-    ax.set_xlabel("변동성 (%)", color=text_c); ax.set_ylabel("기대수익률 (%)", color=text_c)
-    ax.legend(fontsize=8, labelcolor=text_c, facecolor="#0f172a")
-    ax.tick_params(colors=text_c); ax.grid(True, alpha=0.2, color=grid_c)
-    ax.spines[:].set_color(grid_c)
-    cbar = plt.colorbar(sc, ax=ax); cbar.set_label("Sharpe", color=text_c)
-    plt.setp(cbar.ax.yaxis.get_ticklabels(), color=text_c)
-
-    ax = axes[1, 0]; ax.set_facecolor("#1e293b")
-    x = np.arange(len(asset_names))
-    width = 0.2
-    for offset, (name, w) in zip([-1.5, -0.5, 0.5, 1.5], strategies.items()):
-        ax.bar(x + offset * width, w * 100, width=width, label=name)
-    ax.set_xticks(x); ax.set_xticklabels(asset_names, color=text_c)
-    ax.set_title("자산배분 모델별 비중 비교", color=text_c, fontweight="bold")
-    ax.set_ylabel("비중 (%)", color=text_c)
-    ax.legend(fontsize=8, labelcolor=text_c, facecolor="#0f172a")
-    ax.tick_params(colors=text_c); ax.grid(True, alpha=0.2, color=grid_c, axis="y")
-    ax.spines[:].set_color(grid_c)
-
-    ax = axes[1, 1]; ax.set_facecolor("#1e293b")
-    ax.plot(spots, call, label="콜 매수", color="#3b82f6")
-    ax.plot(spots, put, label="풋 매수", color="#ef4444")
-    ax.plot(spots, straddle, label="스트래들", color="#a855f7")
-    ax2 = ax.twinx()
-    ax2.plot(np.arange(len(tenors)), yields, marker="o", color="#22c55e", label="채권 수익률곡선")
-    ax2.set_ylabel("금리 (%)", color="#22c55e")
-    ax2.tick_params(colors="#22c55e")
-    ax2.set_xticks(np.arange(len(tenors)))
-    ax2.set_xticklabels(tenors, color=text_c)
-    ax.axhline(0, color="#94a3b8", linewidth=0.8)
-    ax.set_title("파생상품 손익 + 채권 곡선 예시", color=text_c, fontweight="bold")
-    ax.set_xlabel("기초자산 가격 / 만기", color=text_c); ax.set_ylabel("옵션 손익", color=text_c)
-    ax.legend(fontsize=8, labelcolor=text_c, facecolor="#0f172a", loc="upper left")
-    ax.tick_params(colors=text_c); ax.grid(True, alpha=0.2, color=grid_c)
-    ax.spines[:].set_color(grid_c)
-
-    fig.suptitle("퀀트를 위한 금융 필수 지식 — 웹앱 반영 점검", color=text_c, fontsize=15, fontweight="bold")
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=130, bbox_inches="tight", facecolor="#0f172a")
-    plt.close(fig)
-
-    diagnostics = [
-        {"area": "문서 커리큘럼", "status": "충분", "note": "37~40.md가 Day 052~056의 5일 과정을 모두 포함합니다."},
-        {"area": "기존 웹앱", "status": "부분 반영", "note": "포트폴리오 최적화와 리스크 분석은 있었지만 금융상품별 통합 화면은 부족했습니다."},
-        {"area": "보완 웹앱", "status": "반영", "note": "주식/ETF, 채권, 파생상품, 포트폴리오 이론, 자산배분 모델을 한 화면에서 확인합니다."},
-    ]
-
-    return {
-        "image": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
-        "coverage": coverage,
-        "diagnostics": diagnostics,
-        "strategies": strategy_payload,
-        "curriculum": [
-            {"day": "Day 052", "title": "주식/ETF 상품 이해", "practice": "ETF 성과 비교"},
-            {"day": "Day 053", "title": "채권 상품 이해", "practice": "수익률 곡선·듀레이션"},
-            {"day": "Day 054", "title": "파생상품 이해", "practice": "옵션 손익 시뮬레이션"},
-            {"day": "Day 055", "title": "포트폴리오 이론 및 성과 분석", "practice": "CAGR·MDD·Sharpe"},
-            {"day": "Day 056", "title": "자산배분 모델 및 사례 분석", "practice": "평균분산·블랙리터만·Risk-Parity 비교"},
-        ],
-    }
-
-
-@app.post("/api/quant/risk")
-def quant_risk(req: RiskRequest) -> dict[str, object]:
-    """VaR / CVaR 리스크 분석 (Day39·55 대응)"""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import numpy as np
-    configure_matplotlib_korean_font(plt)
-
-    rng = np.random.default_rng(42)
-    mu, sigma = 0.0004, 0.012
-    daily_ret = rng.normal(mu, sigma, req.n_scenarios).astype(float)
-
-    alpha = 1 - req.confidence
-    var_pct = float(np.percentile(daily_ret, alpha * 100))
-    cvar_pct = float(daily_ret[daily_ret <= var_pct].mean())
-    var_amt = abs(var_pct) * req.portfolio_value
-    cvar_amt = abs(cvar_pct) * req.portfolio_value
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5), facecolor="#0f172a")
-    text_c = "#e2e8f0"; grid_c = "#1e293b"
-
-    ax = axes[0]; ax.set_facecolor("#1e293b")
-    ax.hist(daily_ret * 100, bins=80, color="#3b82f6", alpha=0.75, edgecolor="none", label="수익률 분포")
-    ax.axvline(var_pct * 100, color="#f97316", lw=2, linestyle="--", label=f"VaR ({req.confidence:.0%}): {var_pct:.2%}")
-    ax.axvline(cvar_pct * 100, color="#ef4444", lw=2, linestyle="-", label=f"CVaR: {cvar_pct:.2%}")
-    ax.fill_betweenx([0, ax.get_ylim()[1] if ax.get_ylim()[1] > 0 else 500],
-                     daily_ret.min() * 100, var_pct * 100, color="#ef4444", alpha=0.15)
-    ax.set_xlabel("일간 수익률 (%)", color=text_c); ax.set_ylabel("빈도", color=text_c)
-    ax.set_title(f"수익률 분포 & VaR/CVaR ({req.confidence:.0%} 신뢰수준)", color=text_c, fontsize=11, fontweight="bold")
-    ax.legend(fontsize=8, labelcolor=text_c, facecolor="#0f172a")
-    ax.tick_params(colors=text_c); ax.spines[:].set_color(grid_c)
-    ax.grid(True, alpha=0.2, color=grid_c)
-
-    ax2 = axes[1]; ax2.set_facecolor("#1e293b")
-    labels = ["VaR 예상 손실", "CVaR 예상 손실", "포트폴리오 가치"]
-    values = [var_amt / 1e6, cvar_amt / 1e6, req.portfolio_value / 1e6]
-    colors2 = ["#f97316", "#ef4444", "#22c55e"]
-    bars = ax2.barh(labels, values, color=colors2, alpha=0.85, edgecolor=grid_c)
-    for bar, val in zip(bars, values):
-        ax2.text(val + req.portfolio_value / 1e6 * 0.01, bar.get_y() + bar.get_height() / 2,
-                 f"{val:.1f}M", va="center", color=text_c, fontsize=10, fontweight="bold")
-    ax2.set_xlabel("금액 (백만원)", color=text_c)
-    ax2.set_title("리스크 금액 비교", color=text_c, fontsize=11, fontweight="bold")
-    ax2.tick_params(colors=text_c); ax2.spines[:].set_color(grid_c)
-    ax2.set_facecolor("#1e293b"); ax2.grid(True, alpha=0.2, color=grid_c, axis="x")
-
-    fig.patch.set_facecolor("#0f172a")
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=130, bbox_inches="tight", facecolor="#0f172a")
-    plt.close(fig)
-
-    return {
-        "image": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
-        "var_pct": round(var_pct, 6),
-        "cvar_pct": round(cvar_pct, 6),
-        "var_amount": round(var_amt, 0),
-        "cvar_amount": round(cvar_amt, 0),
-        "confidence": req.confidence,
-        "portfolio_value": req.portfolio_value,
-    }
-
-
-@app.post("/api/quant/pipeline")
-def quant_pipeline(req: PipelineRequest) -> dict[str, object]:
-    """퀀트 실전 4단계 파이프라인 시각화 (Day43·61 대응)"""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import matplotlib.gridspec as gridspec
-    import numpy as np
-    import pandas as pd
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.model_selection import TimeSeriesSplit
-    configure_matplotlib_korean_font(plt)
-    from sklearn.metrics import accuracy_score
-
-    rng = np.random.default_rng(42)
-    n = 1260
-    daily_r = rng.normal(0.0003, 0.015, n)
-    prices = pd.Series(
-        100 * np.exp(np.cumsum(daily_r)),
-        index=pd.date_range("2020-01-01", periods=n, freq="B"),
-    )
-
-    df = pd.DataFrame({"Close": prices})
-    df["MA_fast"] = df["Close"].rolling(req.fast_ma).mean()
-    df["MA_slow"] = df["Close"].rolling(req.slow_ma).mean()
-    df["RSI"] = _calc_rsi(df["Close"])
-    df["BB_upper"] = df["Close"].rolling(20).mean() + 2 * df["Close"].rolling(20).std()
-    df["BB_lower"] = df["Close"].rolling(20).mean() - 2 * df["Close"].rolling(20).std()
-    df["BB_pct"] = (df["Close"] - df["BB_lower"]) / (df["BB_upper"] - df["BB_lower"])
-    df["MACD"] = df["Close"].ewm(span=12).mean() - df["Close"].ewm(span=26).mean()
-    df["ATR"] = (df["Close"].rolling(14).max() - df["Close"].rolling(14).min())
-    df["Signal"] = (df["MA_fast"] > df["MA_slow"]).astype(float)
-    df["Position"] = df["Signal"].shift(1).fillna(0)
-    df["Ret"] = df["Close"].pct_change()
-    df["Strat_Ret"] = df["Position"] * df["Ret"]
-    df["Strat_Cum"] = (1 + df["Strat_Ret"]).cumprod()
-    df["BH_Cum"] = (1 + df["Ret"]).cumprod()
-    df = df.dropna()
-
-    features = ["MA_fast", "MA_slow", "RSI", "BB_pct", "MACD", "ATR"]
-    target = (df["Ret"].shift(-1) > 0).astype(int)
-    feat_df = df[features].iloc[:-1]
-    tgt = target.iloc[:-1]
-    tscv = TimeSeriesSplit(n_splits=3)
-    accs = []
-    for tr_i, te_i in tscv.split(feat_df):
-        rf = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
-        rf.fit(feat_df.iloc[tr_i], tgt.iloc[tr_i])
-        accs.append(accuracy_score(tgt.iloc[te_i], rf.predict(feat_df.iloc[te_i])))
-    ml_acc = float(np.mean(accs))
-
-    ret = df["Strat_Ret"]
-    n_years = len(ret) / 252
-    cum = df["Strat_Cum"]
-    cagr = float(cum.iloc[-1] ** (1 / n_years) - 1) if n_years > 0 else 0
-    excess = ret - 0.03 / 252
-    sharpe = float(excess.mean() / excess.std() * np.sqrt(252)) if excess.std() > 0 else 0
-    rolling_max = cum.cummax()
-    mdd = float(((cum - rolling_max) / rolling_max).min())
-
-    fig = plt.figure(figsize=(15, 10), facecolor="#0f172a")
-    gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0.4, wspace=0.3)
-    text_c = "#e2e8f0"; grid_c = "#1e293b"
-
-    ax1 = fig.add_subplot(gs[0, :])
-    ax1.set_facecolor("#1e293b")
-    ax1.plot(df.index, df["Close"], color="#64748b", lw=0.8, label="주가")
-    ax1.plot(df.index, df["MA_fast"], color="#3b82f6", lw=1.5, label=f"MA{req.fast_ma}")
-    ax1.plot(df.index, df["MA_slow"], color="#f97316", lw=1.5, label=f"MA{req.slow_ma}")
-    ax1.fill_between(df.index, df["BB_upper"], df["BB_lower"], alpha=0.07, color="#8b5cf6")
-    ax1.set_title(f"1단계+2단계: 주가 & 기술지표 — {req.ticker}", color=text_c, fontsize=11, fontweight="bold")
-    ax1.legend(fontsize=8, ncol=4, labelcolor=text_c, facecolor="#0f172a")
-    ax1.tick_params(colors=text_c); ax1.spines[:].set_color(grid_c)
-    ax1.grid(True, alpha=0.2, color=grid_c)
-
-    ax2 = fig.add_subplot(gs[1, 0])
-    ax2.set_facecolor("#1e293b")
-    ax2.plot(df.index, df["Strat_Cum"], color="#3b82f6", lw=2, label=f"전략")
-    ax2.plot(df.index, df["BH_Cum"], color="#94a3b8", lw=2, ls="--", label="Buy&Hold")
-    ax2.set_title(f"3단계: 백테스트 | CAGR {cagr:+.1%} | Sharpe {sharpe:.2f} | MDD {mdd:.1%}",
-                  color=text_c, fontsize=10, fontweight="bold")
-    ax2.legend(fontsize=8, labelcolor=text_c, facecolor="#0f172a")
-    ax2.tick_params(colors=text_c); ax2.spines[:].set_color(grid_c)
-    ax2.grid(True, alpha=0.2, color=grid_c)
-
-    ax3 = fig.add_subplot(gs[1, 1])
-    ax3.set_facecolor("#1e293b")
-    fi = rf.feature_importances_
-    sorted_idx = np.argsort(fi)
-    bars = ax3.barh([features[i] for i in sorted_idx], fi[sorted_idx],
-                    color=["#3b82f6", "#22c55e", "#f97316", "#a78bfa", "#f472b6", "#fbbf24"][::-1],
-                    alpha=0.85, edgecolor=grid_c)
-    ax3.set_title(f"4단계: ML 특징 중요도 | 방향 정확도 {ml_acc:.1%}", color=text_c, fontsize=10, fontweight="bold")
-    ax3.tick_params(colors=text_c); ax3.spines[:].set_color(grid_c)
-    ax3.grid(True, alpha=0.2, color=grid_c, axis="x")
-
-    fig.patch.set_facecolor("#0f172a")
-    plt.suptitle(f"퀀트 실전 4단계 파이프라인 — {req.ticker}", color=text_c, fontsize=13, fontweight="bold", y=1.01)
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=130, bbox_inches="tight", facecolor="#0f172a")
-    plt.close(fig)
-
-    return {
-        "image": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
-        "metrics": {"cagr": round(cagr, 4), "sharpe": round(sharpe, 2), "mdd": round(mdd, 4), "ml_accuracy": round(ml_acc, 4)},
-        "ticker": req.ticker,
     }
 
 
@@ -2576,6 +1139,37 @@ TICKER_LABELS = {
     "DX-Y.NYB": "달러 인덱스",
 }
 
+VOLUME_CLOUD_MARKETS = {
+    "us": [
+        {"ticker": "AAPL", "name": "Apple"}, {"ticker": "MSFT", "name": "Microsoft"},
+        {"ticker": "GOOGL", "name": "Alphabet"}, {"ticker": "AMZN", "name": "Amazon"},
+        {"ticker": "NVDA", "name": "NVIDIA"}, {"ticker": "META", "name": "Meta"},
+        {"ticker": "TSLA", "name": "Tesla"},
+    ],
+    "kr": [
+        {"ticker": "005930.KS", "name": "삼성전자"},
+        {"ticker": "000660.KS", "name": "SK하이닉스"},
+        {"ticker": "373220.KS", "name": "LG에너지솔루션"},
+        {"ticker": "207940.KS", "name": "삼성바이오로직스"},
+        {"ticker": "005380.KS", "name": "현대차"},
+        {"ticker": "000270.KS", "name": "기아"},
+        {"ticker": "068270.KS", "name": "셀트리온"},
+        {"ticker": "105560.KS", "name": "KB금융"},
+        {"ticker": "055550.KS", "name": "신한지주"},
+        {"ticker": "012330.KS", "name": "현대모비스"},
+        {"ticker": "035420.KS", "name": "NAVER"},
+        {"ticker": "028260.KS", "name": "삼성물산"},
+        {"ticker": "006400.KS", "name": "삼성SDI"},
+        {"ticker": "051910.KS", "name": "LG화학"},
+        {"ticker": "003670.KS", "name": "포스코홀딩스"},
+        {"ticker": "035720.KS", "name": "카카오"},
+        {"ticker": "096770.KS", "name": "SK이노베이션"},
+        {"ticker": "034730.KS", "name": "SK"},
+        {"ticker": "086790.KS", "name": "하나금융지주"},
+        {"ticker": "032830.KS", "name": "삼성생명"},
+    ],
+}
+
 
 def _extract_close_series(frame):
     close = frame["Close"]
@@ -2637,6 +1231,67 @@ def market_snapshot(req: MarketSnapshotRequest) -> dict[str, object]:
     return {
         "items": items,
         "fetched_at": fetched_at.isoformat(),
+    }
+
+
+@app.get("/api/market/volume-cloud")
+def market_volume_cloud(market: str = "us") -> dict[str, object]:
+    """Return recent volume and price changes for a compact market bubble cloud."""
+    import pandas as pd
+    import yfinance as yf
+
+    market_key = market.lower()
+    companies = VOLUME_CLOUD_MARKETS.get(market_key)
+    if not companies:
+        raise HTTPException(status_code=400, detail="market은 us 또는 kr만 선택할 수 있습니다.")
+
+    tickers = [company["ticker"] for company in companies]
+    try:
+        data = yf.download(tickers, period="2mo", interval="1d", group_by="ticker",
+                           progress=False, auto_adjust=False, threads=True)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"거래량 데이터를 가져오지 못했습니다: {exc}") from exc
+
+    items: list[dict[str, object]] = []
+    latest_dates: list[pd.Timestamp] = []
+    for company in companies:
+        ticker = company["ticker"]
+        try:
+            frame = data[ticker] if len(tickers) > 1 else data
+            close = _extract_close_series(frame)
+            volume = frame["Volume"]
+            if hasattr(volume, "columns"):
+                volume = volume.iloc[:, 0]
+            volume = volume.dropna()
+            if len(close) < 2 or volume.empty:
+                raise ValueError("가격 또는 거래량 이력이 부족합니다.")
+
+            last_close = float(close.iloc[-1])
+            previous_close = float(close.iloc[-2])
+            last_volume = float(volume.iloc[-1])
+            prior_volume = volume.iloc[-21:-1] if len(volume) > 1 else volume
+            average_volume = float(prior_volume.mean()) if not prior_volume.empty else last_volume
+            items.append({
+                "ticker": ticker,
+                "name": company["name"],
+                "price": round(last_close, 4),
+                "change_pct": round((last_close / previous_close - 1) * 100, 2),
+                "volume": int(last_volume),
+                "average_volume_20d": int(average_volume),
+                "volume_ratio": round(last_volume / average_volume, 2) if average_volume else 0.0,
+                "latest_data_at": pd.Timestamp(close.index[-1]).isoformat(),
+                "status": "ok",
+            })
+            latest_dates.append(pd.Timestamp(close.index[-1]))
+        except Exception as exc:
+            items.append({"ticker": ticker, "name": company["name"], "status": "error", "error": str(exc)})
+
+    return {
+        "market": market_key,
+        "items": items,
+        "fetched_at": pd.Timestamp.utcnow().isoformat(),
+        "latest_data_at": max(latest_dates).isoformat() if latest_dates else None,
+        "source": "Yahoo Finance",
     }
 
 @app.post("/api/macro/realtime")
@@ -3236,372 +1891,7 @@ def macro_simulation(req: MacroSimRequest) -> dict[str, object]:
     return {"image": img_b64, "summary": summary, "n_days": T}
 
 
-class QuizQuestionUpdate(BaseModel):
-    question: str = Field(min_length=5, max_length=500)
-    choices: list[str] = Field(min_length=4, max_length=4)
-    answer: int = Field(ge=0, le=3)
-    explanation: str = Field(default="", max_length=2000)
-
-
-QUIZ_SEED_01_02: list[dict[str, object]] = [
-    {
-        "day": 1, "question_no": 1, "source_doc": "01", "topic": "법적 주체",
-        "question": "법인이 자연인과 구별되는 핵심 특징으로 가장 적절한 것은?",
-        "choices": ["출생으로 성립한다", "법이 권리·의무 능력을 부여한 인위적 존재다", "세금을 내지 않는다", "해산해도 권리능력이 유지된다"],
-        "answer": 1,
-        "explanation": "법인은 설립 등기를 통해 성립하며, 법이 권리·의무의 주체성을 부여한 인위적 존재입니다.",
-    },
-    {
-        "day": 1, "question_no": 2, "source_doc": "01", "topic": "사업자 형태",
-        "question": "개인사업자와 법인사업자의 비교로 옳은 것은?",
-        "choices": ["개인사업자는 대표자 급여를 비용 처리할 수 있다", "법인사업자는 무한책임이 원칙이다", "법인사업자는 주식 발행 등 외부 투자 유치가 상대적으로 용이하다", "개인사업자는 법인세를 낸다"],
-        "answer": 2,
-        "explanation": "법인사업자는 별도 법인격을 바탕으로 지분 구조 설계와 외부 투자 유치가 상대적으로 유리합니다.",
-    },
-    {
-        "day": 1, "question_no": 3, "source_doc": "01", "topic": "책임 구조",
-        "question": "유한책임의 의미로 가장 적절한 것은?",
-        "choices": ["사업채무를 국가가 모두 대신 갚아준다", "출자액 한도 내에서만 책임을 부담한다", "대표이사가 모든 채무를 개인 재산으로 갚는다", "모든 주주는 무한책임을 진다"],
-        "answer": 1,
-        "explanation": "유한책임은 투자자가 출자한 금액 범위 내에서만 손실을 부담하는 구조입니다.",
-    },
-    {
-        "day": 1, "question_no": 4, "source_doc": "01", "topic": "회사 형태",
-        "question": "상법상 회사 형태 중 실제로 가장 보편적으로 사용되는 형태는?",
-        "choices": ["합명회사", "합자회사", "유한회사", "주식회사"],
-        "answer": 3,
-        "explanation": "문서에서는 주식회사가 공개·상장 및 자본조달 측면에서 가장 보편적 형태로 제시됩니다.",
-    },
-    {
-        "day": 1, "question_no": 5, "source_doc": "01", "topic": "주식회사 구조",
-        "question": "주식회사의 최고 의사결정 기관은?",
-        "choices": ["대표이사", "이사회", "주주총회", "감사"],
-        "answer": 2,
-        "explanation": "주주총회가 이사 선임, 정관 변경 등 핵심 사항을 결의하는 최고 의사결정 기관입니다.",
-    },
-    {
-        "day": 1, "question_no": 6, "source_doc": "01", "topic": "주식 개념",
-        "question": "보통주에 대한 설명으로 가장 적절한 것은?",
-        "choices": ["의결권이 없다", "배당을 절대 받을 수 없다", "일반적으로 1주 1의결권을 가진다", "시가가 항상 액면가와 같다"],
-        "answer": 2,
-        "explanation": "문서 기준 보통주는 의결권이 있고 일반적으로 1주당 1표를 행사합니다.",
-    },
-    {
-        "day": 1, "question_no": 7, "source_doc": "01", "topic": "소득세",
-        "question": "소득세(개인)와 법인세(법인)의 비교로 옳은 것은?",
-        "choices": ["소득세 최고세율이 법인세 최고세율보다 낮다", "법인세는 누진구조가 없다", "소득세는 누진세율 구조를 갖고 최고세율이 상대적으로 높다", "법인세는 지방소득세가 없다"],
-        "answer": 2,
-        "explanation": "문서에서 소득세는 6~45%, 법인세는 9~24%로 제시되어 개인 소득세 누진이 더 가파릅니다.",
-    },
-    {
-        "day": 1, "question_no": 8, "source_doc": "01", "topic": "부가가치세",
-        "question": "부가가치세(VAT)에 대한 설명으로 옳은 것은?",
-        "choices": ["세율은 5%가 기본이다", "납부세액은 매출세액-매입세액으로 계산한다", "지방세만 해당된다", "직접세에 해당한다"],
-        "answer": 1,
-        "explanation": "문서에서는 부가가치세 기본세율 10%, 납부액은 매출세액에서 매입세액을 차감하는 구조로 설명합니다.",
-    },
-    {
-        "day": 1, "question_no": 9, "source_doc": "01", "topic": "원천징수",
-        "question": "금융소득(이자·배당)의 기본 원천징수 세율로 문서에 제시된 값은?",
-        "choices": ["3.3%", "10.0%", "15.4%", "22.0%"],
-        "answer": 2,
-        "explanation": "이자·배당소득은 14% + 지방소득세 1.4%로 총 15.4% 원천징수로 제시됩니다.",
-    },
-    {
-        "day": 1, "question_no": 10, "source_doc": "01", "topic": "직접세/간접세",
-        "question": "직접세에 해당하는 항목은?",
-        "choices": ["부가가치세", "주세", "소득세", "담배소비세"],
-        "answer": 2,
-        "explanation": "소득세는 납세자와 담세자가 동일한 직접세로 분류됩니다.",
-    },
-    {
-        "day": 1, "question_no": 11, "source_doc": "01", "topic": "간접세",
-        "question": "간접세의 일반적 특징으로 가장 적절한 것은?",
-        "choices": ["누진세만 가능하다", "납세자와 담세자가 동일하다", "판매자가 납부하지만 소비자가 실질 부담할 수 있다", "지방정부만 부과할 수 있다"],
-        "answer": 2,
-        "explanation": "부가가치세처럼 판매자가 신고·납부하나 최종 부담은 소비자에게 전가되는 구조가 대표적입니다.",
-    },
-    {
-        "day": 1, "question_no": 12, "source_doc": "01", "topic": "금융소득 종합과세",
-        "question": "연간 금융소득(이자+배당)이 얼마를 초과하면 종합소득에 합산 과세되는가?",
-        "choices": ["1,000만원", "2,000만원", "3,000만원", "5,000만원"],
-        "answer": 1,
-        "explanation": "문서에는 금융소득 합계 2,000만원 초과 시 종합과세로 설명되어 있습니다.",
-    },
-    {
-        "day": 1, "question_no": 13, "source_doc": "01", "topic": "지방소득세",
-        "question": "지방소득세에 대한 설명으로 옳은 것은?",
-        "choices": ["소득세·법인세와 무관하다", "소득세·법인세 산출세액의 10%를 별도로 납부한다", "국세청이 아닌 거래소에 납부한다", "법인에게만 부과된다"],
-        "answer": 1,
-        "explanation": "문서에서는 지방소득세가 소득세·법인세 산출세액의 10%로 제시됩니다.",
-    },
-    {
-        "day": 1, "question_no": 14, "source_doc": "01", "topic": "금융소비자보호법",
-        "question": "금융소비자보호법의 핵심 체계로 문서에서 제시한 것은?",
-        "choices": ["3대 판매 원칙", "6대 판매 원칙", "10대 내부통제 원칙", "위법계약 자동 무효"],
-        "answer": 1,
-        "explanation": "문서에서는 금소법 핵심 체계로 6대 판매원칙과 소비자 권리를 강조합니다.",
-    },
-    {
-        "day": 1, "question_no": 15, "source_doc": "01", "topic": "예금자보호",
-        "question": "예금자보호법 관련 설명으로 옳은 것은?",
-        "choices": ["주식·펀드도 동일하게 전액 보호된다", "같은 금융기관 내 계좌는 1인당 5,000만원 한도로 합산 보호된다", "법인은 보호 대상에서 제외된다", "외화예금은 항상 전액 보호된다"],
-        "answer": 1,
-        "explanation": "문서에서는 1인당 5,000만원 한도, 동일 금융기관 내 합산 보호 원칙을 설명합니다.",
-    },
-    {
-        "day": 1, "question_no": 16, "source_doc": "02", "topic": "업종/업태",
-        "question": "업종과 업태의 차이를 가장 잘 설명한 것은?",
-        "choices": ["업종=어떻게 팔아, 업태=무엇을 팔아", "업종=무엇을 팔아, 업태=어떻게 팔아", "둘은 완전히 동일하다", "업종은 세무와 무관하다"],
-        "answer": 1,
-        "explanation": "문서에서 업종은 재화·서비스 종류, 업태는 영업·유통 방식으로 구분합니다.",
-    },
-    {
-        "day": 1, "question_no": 17, "source_doc": "02", "topic": "산업 분류",
-        "question": "GICS에 대한 설명으로 가장 적절한 것은?",
-        "choices": ["한국 통계청이 만든 분류다", "글로벌 ETF·지수 분석에 쓰이는 표준 산업 분류다", "세금 신고 전용 분류다", "2단계 구조만 가진다"],
-        "answer": 1,
-        "explanation": "GICS는 MSCI와 S&P가 만든 글로벌 산업 분류 체계로 포트폴리오 분석에 널리 활용됩니다.",
-    },
-    {
-        "day": 1, "question_no": 18, "source_doc": "02", "topic": "가치사슬",
-        "question": "가치사슬에서 소비자와 가장 가까운 단계는?",
-        "choices": ["업스트림", "미드스트림", "다운스트림", "백오피스"],
-        "answer": 2,
-        "explanation": "다운스트림은 유통·소매·서비스 등 최종 소비자 접점에 가까운 단계입니다.",
-    },
-    {
-        "day": 1, "question_no": 19, "source_doc": "02", "topic": "경기 사이클",
-        "question": "경기 확장기(Expansion)의 특징으로 문서에 제시된 것은?",
-        "choices": ["실업 급등, GDP 감소", "소비·투자 증가와 물가 상승", "금리 급인하", "필수소비재만 강세"],
-        "answer": 1,
-        "explanation": "확장기는 소비·투자 증가, 성장 가속과 함께 에너지·소재·IT 등이 강세로 제시됩니다.",
-    },
-    {
-        "day": 1, "question_no": 20, "source_doc": "02", "topic": "경기 침체",
-        "question": "경기 침체기(Recession)에서 상대적 강세 섹터로 제시된 것은?",
-        "choices": ["에너지·산업재", "금융·부동산", "필수소비재·채권·금", "경기소비재"],
-        "answer": 2,
-        "explanation": "문서에서는 침체기에 필수소비재, 금, 국채 같은 방어적 자산이 강세라고 설명합니다.",
-    },
-    {
-        "day": 1, "question_no": 21, "source_doc": "02", "topic": "핵심 지표",
-        "question": "거시지표와 설명의 연결이 옳은 것은?",
-        "choices": ["CPI: 노동시장", "실업률: 인플레이션 수준", "GDP 성장률: 경제 규모 성장 속도", "환율: 기업 내부 회계기준"],
-        "answer": 2,
-        "explanation": "GDP 성장률은 경제 규모 성장 속도를 나타내는 대표 거시지표입니다.",
-    },
-    {
-        "day": 1, "question_no": 22, "source_doc": "02", "topic": "기준금리/시장금리",
-        "question": "다음 중 시장금리에 해당하는 것은?",
-        "choices": ["한국은행 기준금리", "연준 정책금리 목표범위", "국채 10년물 금리", "법정 최고금리"],
-        "answer": 2,
-        "explanation": "국채 10년물 금리처럼 시장 수요·공급으로 형성되는 금리가 시장금리입니다.",
-    },
-    {
-        "day": 1, "question_no": 23, "source_doc": "02", "topic": "금리 구조",
-        "question": "문서의 금리 구조 설명에서 단기 시장금리 예시는?",
-        "choices": ["국고채 30년", "CD금리(91일)", "회사채 영구채", "우선주 배당수익률"],
-        "answer": 1,
-        "explanation": "CD금리(91일), 콜금리 등이 단기 시장금리 예시로 제시됩니다.",
-    },
-    {
-        "day": 1, "question_no": 24, "source_doc": "02", "topic": "금리-주가 관계",
-        "question": "일반적으로 금리 상승 시 주가에 하방 압력이 커지는 이유로 옳지 않은 것은?",
-        "choices": ["기업 차입비용 증가", "미래이익 할인율 상승", "채권의 상대적 매력 증가", "모든 기업의 매출이 즉시 증가"],
-        "answer": 3,
-        "explanation": "금리 상승은 보통 자금조달 부담을 키워 주가에 부담이며, 매출 즉시 증가가 일반적 결과는 아닙니다.",
-    },
-    {
-        "day": 1, "question_no": 25, "source_doc": "02", "topic": "금리-채권 관계",
-        "question": "채권 가격과 금리의 관계로 가장 적절한 것은?",
-        "choices": ["같은 방향으로 움직인다", "금리와 무관하다", "금리 상승 시 기존 채권 가격은 하락하는 경향이 있다", "쿠폰이 고정이면 가격도 항상 고정된다"],
-        "answer": 2,
-        "explanation": "금리 상승 시 기존 저쿠폰 채권 매력이 낮아져 채권 가격이 하락하는 역관계가 일반적입니다.",
-    },
-    {
-        "day": 1, "question_no": 26, "source_doc": "02", "topic": "통화정책 기관",
-        "question": "한국은행 금통위에 대한 설명으로 문서와 일치하는 것은?",
-        "choices": ["연 12회 정기회의", "총재 포함 7명 구성, 연 8회 정기회의", "정책금리 결정 권한이 없다", "오직 환율만 보고 결정한다"],
-        "answer": 1,
-        "explanation": "문서에서 금통위는 총재 포함 7명, 연 8회 정기회의로 기준금리를 결정한다고 설명합니다.",
-    },
-    {
-        "day": 1, "question_no": 27, "source_doc": "02", "topic": "FOMC",
-        "question": "FOMC의 정책 신호 중 '매파(Hawkish)'가 의미하는 것은?",
-        "choices": ["금리 인하 선호", "경기 부양 우선", "금리 인상 선호 및 인플레이션 억제 우선", "양적완화 무조건 확대"],
-        "answer": 2,
-        "explanation": "매파적 스탠스는 물가 안정 우선, 상대적으로 긴축적 금리 정책 선호를 의미합니다.",
-    },
-    {
-        "day": 1, "question_no": 28, "source_doc": "02", "topic": "데이터 소스",
-        "question": "국내 기준금리·국고채·CD금리 데이터를 공식적으로 조회할 때 문서에서 우선 권장한 출처는?",
-        "choices": ["네이버 금융 기사", "한국은행 ECOS", "개인 블로그", "임의 커뮤니티 엑셀 파일"],
-        "answer": 1,
-        "explanation": "문서에서는 국내 금리 데이터의 1차 신뢰 원천으로 한국은행 ECOS를 강조합니다.",
-    },
-    {
-        "day": 1, "question_no": 29, "source_doc": "02", "topic": "FRED 시리즈",
-        "question": "문서에서 금리 실습 시 자주 사용하는 FRED 시리즈로 언급된 것은?",
-        "choices": ["FEDFUNDS, DGS2, DGS10", "BTCUSD, ETHUSD, DOGEUSD", "KOSPI, KOSDAQ, KRX300", "GDPDEF, CPIAUCSL만 단독 사용"],
-        "answer": 0,
-        "explanation": "문서에 FEDFUNDS, DGS2, DGS10, DGS30, T10Y2Y 등이 대표 시리즈로 제시됩니다.",
-    },
-    {
-        "day": 1, "question_no": 30, "source_doc": "02", "topic": "스프레드 해석",
-        "question": "장단기 금리 스프레드를 볼 때 주의할 점으로 가장 적절한 것은?",
-        "choices": ["장단기 금리 차이는 의미가 없다", "정책금리와 시장금리를 항상 동일 지표로 취급한다", "국가·통화·지표 정의 차이를 확인하고 방향성과 함께 해석한다", "스프레드가 0이면 무조건 강세장이다"],
-        "answer": 2,
-        "explanation": "문서에서는 지표 정의(정책/시장금리), 국가 차이를 확인하고 스프레드의 방향성을 함께 해석하라고 설명합니다.",
-    },
-]
-
-
-def _quiz_collection():
-    return get_db()["quiz_questions"]
-
-
-def _serialize_quiz_question(doc: dict) -> dict:
-    data = dict(doc)
-    data["_id"] = str(data["_id"])
-    return data
-
-
-@lru_cache(maxsize=1)
-def _quiz_seed_from_sql() -> list[dict[str, object]]:
-    if not QUIZ_SQL_PATH.exists():
-        return []
-
-    conn = sqlite3.connect(":memory:")
-    try:
-        conn.executescript(QUIZ_SQL_PATH.read_text(encoding="utf-8"))
-        rows = conn.execute(
-            """
-            SELECT day, question_no, source_doc, topic, question,
-                   choice_1, choice_2, choice_3, choice_4,
-                   answer, explanation
-              FROM quiz_questions
-             ORDER BY day, question_no
-            """
-        ).fetchall()
-    except sqlite3.Error:
-        return []
-    finally:
-        conn.close()
-
-    seeds: list[dict[str, object]] = []
-    for (
-        day,
-        question_no,
-        source_doc,
-        topic,
-        question,
-        choice_1,
-        choice_2,
-        choice_3,
-        choice_4,
-        answer,
-        explanation,
-    ) in rows:
-        seeds.append(
-            {
-                "day": int(day),
-                "question_no": int(question_no),
-                "source_doc": source_doc,
-                "topic": topic,
-                "question": question,
-                "choices": [choice_1, choice_2, choice_3, choice_4],
-                "answer": int(answer),
-                "explanation": explanation,
-            }
-        )
-
-    return seeds
-
-
-async def _seed_quiz_questions() -> int:
-    coll = _quiz_collection()
-    await coll.create_index([("day", 1), ("question_no", 1)], unique=True)
-    quiz_seed = _quiz_seed_from_sql() or QUIZ_SEED_01_02
-    inserted = 0
-    for q in quiz_seed:
-        payload = dict(q)
-        try:
-            result = await coll.update_one(
-                {"day": payload["day"], "question_no": payload["question_no"]},
-                {"$setOnInsert": payload},
-                upsert=True,
-            )
-        except DuplicateKeyError:
-            continue
-        if result.upserted_id:
-            inserted += 1
-    return inserted
-
-
-@app.get("/api/quiz/day/{day}")
-async def get_quiz_by_day(day: int) -> list[dict]:
-    coll = _quiz_collection()
-    rows = await coll.find({"day": day}).sort("question_no", 1).to_list(length=100)
-    return [_serialize_quiz_question(r) for r in rows]
-
-
-@app.patch("/api/quiz/questions/{question_id}")
-async def update_quiz_question(question_id: str, payload: QuizQuestionUpdate) -> dict:
-    try:
-        oid = ObjectId(question_id)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="유효하지 않은 문항 ID입니다.") from exc
-
-    choices = [c.strip() for c in payload.choices]
-    if any(not c for c in choices):
-        raise HTTPException(status_code=400, detail="보기는 빈 문자열일 수 없습니다.")
-
-    coll = _quiz_collection()
-    result = await coll.update_one(
-        {"_id": oid},
-        {
-            "$set": {
-                "question": payload.question.strip(),
-                "choices": choices,
-                "answer": payload.answer,
-                "explanation": payload.explanation.strip(),
-            }
-        },
-    )
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="문항을 찾을 수 없습니다.")
-
-    updated = await coll.find_one({"_id": oid})
-    return _serialize_quiz_question(updated) if updated else {}
-
-
-@app.get("/api/quiz/days")
-async def get_quiz_days() -> list[dict]:
-    coll = _quiz_collection()
-    pipeline = [
-        {"$group": {"_id": "$day", "count": {"$sum": 1}}},
-        {"$sort": {"_id": 1}},
-        {"$project": {"day": "$_id", "count": 1, "_id": 0}},
-    ]
-    result = await coll.aggregate(pipeline).to_list(length=100)
-    return result
-
-
-@app.post("/api/quiz/seed")
-async def seed_quiz_questions() -> dict[str, int]:
-    inserted = await _seed_quiz_questions()
-    coll = _quiz_collection()
-    total = await coll.count_documents({})
-    return {"inserted": inserted, "total_questions": total}
-
-
-@app.get("/api/quiz/seed-script")
-def get_quiz_seed_script() -> dict[str, str]:
-    quiz_seed = _quiz_seed_from_sql() or QUIZ_SEED_01_02
-    script = "db.quiz_questions.insertMany(" + json.dumps(quiz_seed, ensure_ascii=False, indent=2) + ");"
-    return {"script": script}
-
+app.include_router(quiz_router)
 
 class CompanyFinancialsRequest(BaseModel):
     ticker: str = Field(default="AAPL", min_length=1, max_length=30)
@@ -3925,7 +2215,6 @@ class DartFinancialAnalysisRequest(BaseModel):
     bsns_year:    str       = Field(default="2023", pattern=r"^\d{4}$")
     reprt_code:   str       = Field(default="11011", pattern=r"^1101[1-4]$",
                                     description="11011=사업보고서 11012=반기 11013=1분기 11014=3분기")
-    ollama_model: str | None = Field(default=None, description="Ollama 모델명 (미지정 시 환경변수 기본값 사용)")
 
 
 def _parse_dart_amounts(items: list[dict]) -> dict[str, dict[str, float]]:
@@ -4301,23 +2590,6 @@ def dart_financial_analysis(req: DartFinancialAnalysisRequest) -> dict:
         "unit":                 "억원",
     }
 
-    # ── 5. AI narrative (Ollama → rule-based fallback) ────────────────────────
-    ollama_text: str | None = None
-    ollama_model_used: str | None = None
-    ollama_ok = _ollama_available()
-
-    if ollama_ok:
-        try:
-            model_to_use = req.ollama_model or OLLAMA_MODEL
-            sys_p, usr_p = _build_financial_analysis_prompt(
-                company.get("corp_name", ""),
-                market, req.bsns_year, snap, ratios, score, grade,
-            )
-            ollama_text       = _ollama_chat(model_to_use, sys_p, usr_p)
-            ollama_model_used = model_to_use
-        except Exception:
-            ollama_ok = False
-
     analysis = _generate_dart_analysis(company, market, ratios, score, grade, req.bsns_year)
 
     return {
@@ -4340,709 +2612,13 @@ def dart_financial_analysis(req: DartFinancialAnalysisRequest) -> dict:
             "breakdown": breakdown,
         },
         "analysis":       analysis,
-        "ollama": {
-            "available":    ollama_ok,
-            "host":         OLLAMA_HOST,
-            "model_used":   ollama_model_used,
-            "text":         ollama_text,
-        },
         "bsns_year":  req.bsns_year,
     }
 
 
-# ─── Ollama Endpoints ────────────────────────────────────────────────────────
-
-class OllamaChatRequest(BaseModel):
-    model:   str        = Field(default="")
-    prompt:  str        = Field(min_length=1, max_length=8000)
-    system:  str        = Field(default="당신은 한국 금융·투자 전문가입니다. 한국어로 답변하세요.")
-    temperature: float  = Field(default=0.4, ge=0.0, le=2.0)
-    num_predict: int    = Field(default=600, ge=50, le=2000)
-
-
-class OllamaPullRequest(BaseModel):
-    model: str = Field(min_length=1, max_length=100)
-
-
-@app.get("/api/ollama/status")
-def ollama_status() -> dict:
-    """Return Ollama connection status and available models."""
-    available = _ollama_available()
-    models: list[dict] = []
-    if available:
-        raw = _ollama_models()
-        for m in raw:
-            details = m.get("details", {})
-            models.append({
-                "name":       m.get("name", ""),
-                "size_gb":    round(m.get("size", 0) / 1e9, 2),
-                "param_size": details.get("parameter_size", ""),
-                "quantize":   details.get("quantization_level", ""),
-                "modified":   (m.get("modified_at") or "")[:10],
-                "is_default": m.get("name", "") == OLLAMA_MODEL,
-            })
-    return {
-        "available":     available,
-        "host":          OLLAMA_HOST,
-        "default_model": OLLAMA_MODEL,
-        "models":        models,
-        "model_count":   len(models),
-        "recommended": {
-            "financial_analysis": "llama3:latest",
-            "korean_text":        "ko-llama:latest",
-            "embedding":          "nomic-embed-text:latest",
-            "fast_coding":        "qwen2.5-coder:1.5b-base",
-        },
-        "suggested_pull": [
-            {"name": "llama3.1:8b",    "desc": "한국어 지원 강화 버전 (추천)", "size": "~4.7GB"},
-            {"name": "qwen2.5:7b",     "desc": "한국어·영어 다국어 최적화",   "size": "~4.4GB"},
-            {"name": "exaone3.5:7.8b", "desc": "LG AI Research 한국어 전용", "size": "~4.9GB"},
-        ],
-    }
-
-
-@app.post("/api/ollama/chat")
-def ollama_chat(req: OllamaChatRequest) -> dict:
-    """Send a prompt to Ollama and return the generated text."""
-    model = req.model or OLLAMA_MODEL
-    text  = _ollama_chat(model, req.system, req.prompt, req.temperature, req.num_predict)
-    return {"model": model, "response": text, "host": OLLAMA_HOST}
-
-
-@app.post("/api/ollama/pull")
-def ollama_pull(req: OllamaPullRequest) -> dict:
-    """Start pulling an Ollama model (non-streaming, may take several minutes)."""
-    result = _ollama_request(
-        "/api/pull",
-        {"name": req.model, "stream": False},
-        timeout=600,  # 10-min max for large models
-    )
-    status = result.get("status", "unknown")
-    return {"model": req.model, "status": status, "detail": result}
-
-
-# ─── Tax / Accounting Simulation ─────────────────────────────────────────────
-
-class TaxSimulationRequest(BaseModel):
-    transactions: list[dict]
-    entity_type: str = Field(default="individual", pattern="^(individual|corporate)$")
-    tax_year: int = Field(default=2024, ge=2020, le=2030)
-    business_name: str = Field(default="")
-    taxpayer_id: str = Field(default="")
-    vat_registered: bool = Field(default=True)
-    standard_deduction: float = Field(default=0.0, ge=0.0)
-
-
-_INCOME_KEYWORDS: dict[str, list[str]] = {
-    "상품매출":   ["매출", "판매대금", "카드매출", "판매입금", "상품판매"],
-    "서비스매출": ["서비스", "용역", "컨설팅", "자문료", "강의료"],
-    "임대수입":   ["임대", "월세", "부동산"],
-    "이자수입":   ["이자수입", "예금이자", "이자"],
-    "기타수입":   ["환급", "지원금", "보조금", "보상금", "배당"],
-}
-
-_EXPENSE_KEYWORDS: dict[str, list[str]] = {
-    "급여":       ["급여", "월급", "임금", "상여", "인건비", "퇴직금"],
-    "임차료":     ["임대료", "임차료", "월세", "관리비"],
-    "접대비":     ["접대", "회식", "식대", "거래처식사"],
-    "광고선전비": ["광고", "마케팅", "홍보"],
-    "복리후생비": ["복리", "후생", "식권", "직원식대"],
-    "통신비":     ["통신", "인터넷", "전화요금", "KT", "SKT", "LGU"],
-    "수도광열비": ["전기요금", "가스요금", "수도요금", "한전", "한국전력", "가스공사"],
-    "교통비":     ["교통비", "주유", "택시", "버스", "주차비", "고속도로"],
-    "사무용품비": ["사무용품", "문구", "비품", "소모품", "사무기기"],
-    "보험료":     ["보험료", "화재보험", "자동차보험", "단체보험"],
-    "수수료비용": ["수수료", "카드수수료", "결제수수료", "플랫폼수수료"],
-}
-
-
-def _categorize_tx(desc: str, deposit: float, withdrawal: float) -> tuple[str, str]:
-    if deposit > 0:
-        for cat, kws in _INCOME_KEYWORDS.items():
-            if any(k in desc for k in kws):
-                return "income", cat
-        return "income", "기타수입"
-    for cat, kws in _EXPENSE_KEYWORDS.items():
-        if any(k in desc for k in kws):
-            return "expense", cat
-    return "expense", "기타비용"
-
-
-def _calc_income_tax(income: float) -> float:
-    """Korean individual income tax brackets (2024)."""
-    if income <= 0:
-        return 0.0
-    brackets = [
-        (14_000_000,         0.06, 0),
-        (50_000_000,         0.15, 1_260_000),
-        (88_000_000,         0.24, 5_220_000),
-        (150_000_000,        0.35, 14_900_000),
-        (300_000_000,        0.38, 19_400_000),
-        (500_000_000,        0.40, 25_400_000),
-        (1_000_000_000,      0.42, 35_400_000),
-        (float("inf"),       0.45, 65_400_000),
-    ]
-    for limit, rate, deduction in brackets:
-        if income <= limit:
-            return max(0.0, income * rate - deduction)
-    return max(0.0, income * 0.45 - 65_400_000)
-
-
-def _calc_corporate_tax(income: float) -> float:
-    """Korean corporate tax brackets (2024)."""
-    if income <= 0:
-        return 0.0
-    brackets = [
-        (200_000_000,         0.09, 0),
-        (20_000_000_000,      0.19, 20_000_000),
-        (300_000_000_000,     0.21, 420_000_000),
-        (float("inf"),        0.24, 9_420_000_000),
-    ]
-    for limit, rate, deduction in brackets:
-        if income <= limit:
-            return max(0.0, income * rate - deduction)
-    return max(0.0, income * 0.24 - 9_420_000_000)
-
-
-def _parse_df_to_transactions(df: "import pandas; pandas.DataFrame") -> list[dict]:
-    import pandas as pd
-
-    raw_cols = list(df.columns)
-    col_map: dict[str, str | None] = {
-        "date": None, "description": None,
-        "withdrawal": None, "deposit": None, "balance": None,
-    }
-
-    DATE_KW   = ["날짜", "일자", "거래일", "일시", "거래시간", "date"]
-    DESC_KW   = ["내용", "적요", "거래내용", "거래명", "메모", "description"]
-    OUT_KW    = ["출금", "출금액", "지출", "출금금액", "debit", "withdrawal"]
-    IN_KW     = ["입금", "입금액", "수입", "입금금액", "credit", "deposit"]
-    BAL_KW    = ["잔액", "잔금", "balance"]
-
-    for c in raw_cols:
-        cs = str(c).strip()
-        if col_map["date"]        is None and any(k in cs for k in DATE_KW):   col_map["date"]        = c
-        if col_map["description"] is None and any(k in cs for k in DESC_KW):   col_map["description"] = c
-        if col_map["withdrawal"]  is None and any(k in cs for k in OUT_KW):    col_map["withdrawal"]  = c
-        if col_map["deposit"]     is None and any(k in cs for k in IN_KW):     col_map["deposit"]     = c
-        if col_map["balance"]     is None and any(k in cs for k in BAL_KW):    col_map["balance"]     = c
-
-    def _num(val: object) -> float:
-        try:
-            s = str(val).replace(",", "").strip()
-            return float(s) if s and s.lower() not in ("nan", "") else 0.0
-        except (ValueError, TypeError):
-            return 0.0
-
-    txs: list[dict] = []
-    for _, row in df.iterrows():
-        date_val = str(row[col_map["date"]]).strip()   if col_map["date"]        else ""
-        desc_val = str(row[col_map["description"]]).strip() if col_map["description"] else ""
-        out_val  = _num(row[col_map["withdrawal"]])    if col_map["withdrawal"]   else 0.0
-        in_val   = _num(row[col_map["deposit"]])       if col_map["deposit"]      else 0.0
-        bal_val  = _num(row[col_map["balance"]])       if col_map["balance"]      else 0.0
-
-        if not date_val or date_val.lower() == "nan":
-            continue
-
-        txs.append({
-            "date":        date_val,
-            "description": desc_val,
-            "withdrawal":  out_val,
-            "deposit":     in_val,
-            "balance":     bal_val,
-        })
-    return txs
-
-
-@app.post("/api/tax/upload")
-async def tax_upload(file: UploadFile = File(...)) -> dict:
-    """Parse a bank-statement CSV or Excel file and return structured transactions."""
-    import pandas as pd
-
-    filename = (file.filename or "").lower()
-    content  = await file.read()
-
-    try:
-        if filename.endswith((".xlsx", ".xls")):
-            df = pd.read_excel(io.BytesIO(content), dtype=str)
-        else:
-            df = None
-            for enc in ("utf-8-sig", "utf-8", "euc-kr", "cp949"):
-                try:
-                    text = content.decode(enc)
-                    df   = pd.read_csv(io.StringIO(text), dtype=str)
-                    break
-                except (UnicodeDecodeError, Exception):
-                    continue
-            if df is None:
-                raise HTTPException(status_code=400, detail="파일 인코딩을 감지할 수 없습니다.")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"파일 파싱 오류: {exc}") from exc
-
-    df.dropna(how="all", inplace=True)
-    txs = _parse_df_to_transactions(df)
-
-    if not txs:
-        raise HTTPException(status_code=400, detail="유효한 거래 데이터를 찾을 수 없습니다. 컬럼명을 확인하세요.")
-
-    return {
-        "status":   "ok",
-        "rows":     len(txs),
-        "columns":  list(df.columns),
-        "transactions": txs[:500],  # max 500 rows for safety
-    }
-
-
-@app.get("/api/tax/sample")
-def tax_sample() -> dict:
-    """Return synthetic sample transaction data for demo purposes."""
-    import datetime, math, random
-
-    rng = random.Random(42)
-    base_date = datetime.date(2024, 1, 2)
-    balance   = 50_000_000.0
-    txs: list[dict] = []
-
-    INCOME_TEMPLATES = [
-        ("상품 판매 대금 입금 (거래처A)",   3_000_000, 8_000_000, "상품매출"),
-        ("컨설팅 용역료 입금",               2_000_000, 5_000_000, "서비스매출"),
-        ("카드매출 정산",                    1_000_000, 4_000_000, "상품매출"),
-        ("임대료 수입",                      1_500_000, 1_500_000, "임대수입"),
-        ("이자수입",                          50_000,   200_000, "이자수입"),
-    ]
-    EXPENSE_TEMPLATES = [
-        ("급여 지급",                        3_500_000, 6_000_000, "급여"),
-        ("사무실 임대료 납부",               1_200_000, 1_200_000, "임차료"),
-        ("광고비 지출",                       300_000,  800_000, "광고선전비"),
-        ("사무용품 구매",                      50_000,  200_000, "사무용품비"),
-        ("KT 통신비",                          80_000,  150_000, "통신비"),
-        ("전기요금 납부 (한전)",              120_000,  300_000, "수도광열비"),
-        ("교통비 (주유·택시)",               100_000,  400_000, "교통비"),
-        ("거래처 회식 (접대비)",             300_000,  500_000, "접대비"),
-        ("카드수수료",                         30_000,  100_000, "수수료비용"),
-        ("복리후생비",                        200_000,  500_000, "복리후생비"),
-        ("단체보험료",                        150_000,  250_000, "보험료"),
-    ]
-
-    for day_offset in range(0, 365, rng.randint(1, 4)):
-        date = base_date + datetime.timedelta(days=day_offset)
-        if date >= datetime.date(2025, 1, 1):
-            break
-
-        # 50% income, 50% expense
-        if rng.random() < 0.45:
-            tmpl = rng.choice(INCOME_TEMPLATES)
-            amt  = rng.randint(int(tmpl[1] / 1000), int(tmpl[2] / 1000)) * 1000
-            balance += amt
-            txs.append({
-                "date":        date.strftime("%Y-%m-%d"),
-                "description": tmpl[0],
-                "deposit":     float(amt),
-                "withdrawal":  0.0,
-                "balance":     balance,
-            })
-        else:
-            tmpl = rng.choice(EXPENSE_TEMPLATES)
-            amt  = rng.randint(int(tmpl[1] / 1000), int(tmpl[2] / 1000)) * 1000
-            balance -= amt
-            txs.append({
-                "date":        date.strftime("%Y-%m-%d"),
-                "description": tmpl[0],
-                "deposit":     0.0,
-                "withdrawal":  float(amt),
-                "balance":     balance,
-            })
-
-    return {"status": "ok", "rows": len(txs), "transactions": txs}
-
-
-@app.post("/api/tax/simulate")
-def tax_simulate(req: TaxSimulationRequest) -> dict:
-    """Run full Korean tax simulation on the provided transaction list."""
-    import datetime
-
-    categorized: list[dict] = []
-    income_by_cat: dict[str, float] = {}
-    expense_by_cat: dict[str, float] = {}
-    monthly: dict[str, dict[str, float]] = {}
-
-    for tx in req.transactions:
-        deposit    = float(tx.get("deposit", 0) or 0)
-        withdrawal = float(tx.get("withdrawal", 0) or 0)
-        desc       = str(tx.get("description", ""))
-        date_str   = str(tx.get("date", ""))
-        balance    = float(tx.get("balance", 0) or 0)
-
-        tx_type, category = _categorize_tx(desc, deposit, withdrawal)
-        amount = deposit if tx_type == "income" else withdrawal
-
-        categorized.append({
-            "date":        date_str,
-            "description": desc,
-            "deposit":     deposit,
-            "withdrawal":  withdrawal,
-            "balance":     balance,
-            "type":        tx_type,
-            "category":    category,
-            "amount":      amount,
-        })
-
-        month = date_str[:7]
-        if month not in monthly:
-            monthly[month] = {"income": 0.0, "expense": 0.0}
-        monthly[month][tx_type] += amount
-
-        if tx_type == "income":
-            income_by_cat[category]  = income_by_cat.get(category, 0.0)  + amount
-        else:
-            expense_by_cat[category] = expense_by_cat.get(category, 0.0) + amount
-
-    total_income  = sum(income_by_cat.values())
-    total_expense = sum(expense_by_cat.values())
-    net_income    = total_income - total_expense
-    taxable_income = max(0.0, net_income - req.standard_deduction)
-
-    # VAT (부가가치세) — 일반과세자 기준 10%
-    vat_output  = total_income  * 0.10 if req.vat_registered else 0.0
-    vat_input   = total_expense * 0.10 if req.vat_registered else 0.0
-    vat_payable = max(0.0, vat_output - vat_input)
-
-    # 소득세 또는 법인세
-    if req.entity_type == "individual":
-        base_tax = _calc_income_tax(taxable_income)
-    else:
-        base_tax = _calc_corporate_tax(taxable_income)
-
-    local_tax  = base_tax * 0.10   # 지방소득세
-    total_tax  = base_tax + local_tax
-    effective_rate = (base_tax / taxable_income * 100) if taxable_income > 0 else 0.0
-
-    # Income tax bracket breakdown (for audit report)
-    bracket_info: list[dict] = []
-    if req.entity_type == "individual":
-        BRACKETS = [
-            (14_000_000,   "6%",  14_000_000),
-            (50_000_000,   "15%", 36_000_000),
-            (88_000_000,   "24%", 38_000_000),
-            (150_000_000,  "35%", 62_000_000),
-            (300_000_000,  "38%", 150_000_000),
-            (500_000_000,  "40%", 200_000_000),
-            (1_000_000_000,"42%", 500_000_000),
-            (float("inf"), "45%", 0),
-        ]
-        prev = 0.0
-        for limit, rate_label, width in BRACKETS:
-            if taxable_income > prev:
-                in_bracket = min(taxable_income, limit if limit != float("inf") else taxable_income) - prev
-                bracket_info.append({
-                    "range": f"{int(prev):,}원 초과 ~ {int(limit):,}원 이하" if limit != float("inf") else f"{int(prev):,}원 초과",
-                    "rate":  rate_label,
-                    "amount": in_bracket,
-                })
-                prev = limit
-            else:
-                break
-
-    monthly_sorted = dict(sorted(monthly.items()))
-
-    return {
-        "entity_type":    req.entity_type,
-        "tax_year":       req.tax_year,
-        "business_name":  req.business_name,
-        "taxpayer_id":    req.taxpayer_id,
-        "summary": {
-            "total_income":    total_income,
-            "total_expense":   total_expense,
-            "net_income":      net_income,
-            "taxable_income":  taxable_income,
-            "standard_deduction": req.standard_deduction,
-        },
-        "income_by_category":  income_by_cat,
-        "expense_by_category": expense_by_cat,
-        "monthly":             monthly_sorted,
-        "vat": {
-            "output_tax":  vat_output,
-            "input_tax":   vat_input,
-            "payable":     vat_payable,
-            "registered":  req.vat_registered,
-        },
-        "income_tax": {
-            "amount":         base_tax,
-            "local_tax":      local_tax,
-            "total":          total_tax,
-            "effective_rate": effective_rate,
-            "brackets":       bracket_info,
-        },
-        "transactions": categorized,
-    }
-
-
-# ─── RAG (Retrieval-Augmented Generation) ────────────────────────────────────
-
-_QDRANT_URL        = os.getenv("QDRANT_URL",        "http://localhost:6333")
-_QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "investment_docs")
-_OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
-
-
-def _qdrant_request(method: str, path: str, payload: dict | None = None) -> dict:
-    url = _QDRANT_URL.rstrip("/") + path
-    data = None
-    headers: dict[str, str] = {}
-    if payload is not None:
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, method=method, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            body = resp.read().decode("utf-8")
-            return json.loads(body) if body else {}
-    except urllib.error.HTTPError as exc:
-        err_body = exc.read().decode("utf-8", errors="ignore")
-        raise HTTPException(status_code=502, detail=f"Qdrant 오류({exc.code}): {err_body[:200]}") from exc
-    except urllib.error.URLError as exc:
-        raise HTTPException(status_code=503, detail=f"Qdrant 연결 실패 ({_QDRANT_URL}): {exc.reason}") from exc
-
-
-def _qdrant_available() -> bool:
-    try:
-        req = urllib.request.Request(_QDRANT_URL.rstrip("/") + "/collections")
-        with urllib.request.urlopen(req, timeout=3) as r:
-            return r.status == 200
-    except Exception:
-        return False
-
-
-def _ollama_embed(text: str, model: str = _OLLAMA_EMBED_MODEL) -> list[float] | None:
-    """Ollama /api/embeddings 호출. 실패 시 None."""
-    try:
-        result = _ollama_request(
-            "/api/embeddings",
-            {"model": model, "prompt": text},
-            timeout=30,
-        )
-        emb = result.get("embedding")
-        if emb and len(emb) > 0:
-            return [float(v) for v in emb]
-        return None
-    except Exception:
-        return None
-
-
-def _hash_embed(text: str, dim: int = 384) -> list[float]:
-    """해시 기반 폴백 임베딩 (upload_docs_to_qdrant.sh 해시 임베딩과 동일)."""
-    import hashlib, math as _math, re as _re
-    TOKEN = _re.compile(r"[0-9A-Za-z가-힣_]+")
-    vec = [0.0] * dim
-    tokens = TOKEN.findall(text.lower())
-    if not tokens:
-        return vec
-    for token in tokens:
-        digest = hashlib.sha256(token.encode()).digest()
-        idx = int.from_bytes(digest[:4], "big") % dim
-        sign = 1.0 if (digest[4] & 1) == 0 else -1.0
-        vec[idx] += sign
-    norm = _math.sqrt(sum(v * v for v in vec))
-    if norm > 0:
-        vec = [v / norm for v in vec]
-    return vec
-
-
-def _embed_query(text: str) -> tuple[list[float], str]:
-    """쿼리 텍스트를 임베딩. Ollama 성공 시 (vector, 'ollama'), 폴백 시 (vector, 'hash')."""
-    if _ollama_available():
-        emb = _ollama_embed(text)
-        if emb:
-            return emb, "ollama"
-    # 컬렉션 벡터 크기 확인해서 hash dim 맞추기
-    try:
-        col_info = _qdrant_request("GET", f"/collections/{_QDRANT_COLLECTION}")
-        dim = col_info.get("result", {}).get("config", {}).get("params", {}).get("vectors", {}).get("size", 384)
-    except Exception:
-        dim = 384
-    return _hash_embed(text, dim=int(dim)), "hash"
-
-
-class RagSearchRequest(BaseModel):
-    query: str = Field(min_length=1, max_length=2000, description="검색 질문")
-    top_k: int = Field(default=5, ge=1, le=20, description="반환할 최대 청크 수")
-    score_threshold: float = Field(default=0.0, ge=0.0, le=1.0, description="최소 유사도 점수 (0=필터 없음)")
-
-
-class RagAskRequest(BaseModel):
-    query: str = Field(min_length=1, max_length=2000, description="질문")
-    top_k: int = Field(default=5, ge=1, le=20)
-    score_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
-    ollama_model: str | None = Field(default=None, description="답변 생성 모델 (미지정 시 기본값)")
-
-
-@app.post("/api/rag/search")
-def rag_search(req: RagSearchRequest) -> dict[str, object]:
-    """Qdrant에서 관련 문서 청크를 검색합니다."""
-    if not _qdrant_available():
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                f"Qdrant 서버에 연결할 수 없습니다 ({_QDRANT_URL}). "
-                "서버를 실행하고 scripts/upload_docs_to_qdrant.sh 로 문서를 업로드하세요."
-            ),
-        )
-
-    vector, embed_method = _embed_query(req.query)
-
-    search_payload: dict[str, object] = {
-        "vector": vector,
-        "limit": req.top_k,
-        "with_payload": True,
-        "with_vector": False,
-    }
-    if req.score_threshold > 0:
-        search_payload["score_threshold"] = req.score_threshold
-
-    result = _qdrant_request(
-        "POST",
-        f"/collections/{_QDRANT_COLLECTION}/points/search",
-        search_payload,
-    )
-
-    hits = result.get("result", [])
-    chunks = [
-        {
-            "score":       round(h.get("score", 0), 4),
-            "source_doc":  h.get("payload", {}).get("source_doc", ""),
-            "chunk_index": h.get("payload", {}).get("chunk_index", 0),
-            "text":        h.get("payload", {}).get("text", ""),
-        }
-        for h in hits
-    ]
-
-    return {
-        "query":        req.query,
-        "embed_method": embed_method,
-        "count":        len(chunks),
-        "results":      chunks,
-    }
-
-
-@app.post("/api/rag/ask")
-def rag_ask(req: RagAskRequest) -> dict[str, object]:
-    """RAG: Qdrant 검색 후 Ollama로 답변을 생성합니다."""
-    if not _qdrant_available():
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                f"Qdrant 서버에 연결할 수 없습니다 ({_QDRANT_URL}). "
-                "서버를 실행하고 scripts/upload_docs_to_qdrant.sh 로 문서를 업로드하세요."
-            ),
-        )
-
-    # 1. 벡터 검색
-    vector, embed_method = _embed_query(req.query)
-    search_payload: dict[str, object] = {
-        "vector": vector,
-        "limit": req.top_k,
-        "with_payload": True,
-        "with_vector": False,
-    }
-    if req.score_threshold > 0:
-        search_payload["score_threshold"] = req.score_threshold
-
-    result = _qdrant_request(
-        "POST",
-        f"/collections/{_QDRANT_COLLECTION}/points/search",
-        search_payload,
-    )
-    hits = result.get("result", [])
-    chunks = [
-        {
-            "score":      round(h.get("score", 0), 4),
-            "source_doc": h.get("payload", {}).get("source_doc", ""),
-            "text":       h.get("payload", {}).get("text", ""),
-        }
-        for h in hits
-    ]
-
-    # 2. 컨텍스트 구성
-    context_parts = []
-    for i, c in enumerate(chunks, 1):
-        context_parts.append(f"[출처: {c['source_doc']} | 유사도: {c['score']}]\n{c['text']}")
-    context = "\n\n---\n\n".join(context_parts)
-
-    # 3. Ollama 답변 생성
-    ollama_ok = _ollama_available()
-    answer: str | None = None
-    model_used: str | None = None
-
-    if ollama_ok:
-        model_to_use = req.ollama_model or OLLAMA_MODEL
-        system_prompt = (
-            "당신은 한국 금융·투자·경제 교육 전문가입니다. "
-            "아래 참고 문서를 바탕으로 질문에 한국어로 정확하고 간결하게 답하세요. "
-            "참고 문서에 없는 내용은 '제공된 문서에 해당 정보가 없습니다'라고 명시하세요."
-        )
-        user_prompt = (
-            f"【참고 문서】\n{context}\n\n"
-            f"【질문】\n{req.query}\n\n"
-            "위 참고 문서를 기반으로 질문에 답해주세요."
-        )
-        try:
-            answer = _ollama_chat(model_to_use, system_prompt, user_prompt, temperature=0.2, num_predict=800)
-            model_used = model_to_use
-        except Exception:
-            ollama_ok = False
-
-    if not ollama_ok or not answer:
-        # Ollama 없을 때 검색 결과만 반환
-        answer = (
-            "Ollama 서버에 연결할 수 없어 검색 결과만 반환합니다. "
-            "아래 참고 문서를 확인하세요."
-        )
-
-    return {
-        "query":        req.query,
-        "answer":       answer,
-        "embed_method": embed_method,
-        "ollama_model": model_used,
-        "sources":      chunks,
-        "source_count": len(chunks),
-    }
-
-
-@app.get("/api/rag/status")
-def rag_status() -> dict[str, object]:
-    """Qdrant 연결 상태 및 컬렉션 정보를 반환합니다."""
-    qdrant_ok = _qdrant_available()
-    collection_info: dict = {}
-    if qdrant_ok:
-        try:
-            col = _qdrant_request("GET", f"/collections/{_QDRANT_COLLECTION}")
-            res = col.get("result", {})
-            collection_info = {
-                "points_count": res.get("points_count", 0),
-                "vector_size":  res.get("config", {}).get("params", {}).get("vectors", {}).get("size"),
-                "status":       res.get("status", "unknown"),
-            }
-        except Exception:
-            collection_info = {"error": "컬렉션이 없거나 조회 실패"}
-
-    return {
-        "qdrant": {
-            "available":  qdrant_ok,
-            "url":        _QDRANT_URL,
-            "collection": _QDRANT_COLLECTION,
-            **collection_info,
-        },
-        "ollama": {
-            "available":    _ollama_available(),
-            "host":         OLLAMA_HOST,
-            "embed_model":  _OLLAMA_EMBED_MODEL,
-            "chat_model":   OLLAMA_MODEL,
-        },
-        "upload_hint": "문서 업로드: bash scripts/upload_docs_to_qdrant.sh",
-    }
-
+app.include_router(tax_router)
+app.include_router(rag_router)
+install_openapi(app)
 
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -14,12 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 INDEX_HTML = ROOT / "app" / "frontend" / "index.html"
 PARTIAL_OUT = ROOT / "app" / "frontend" / "pages" / "partials" / "sidebar-nav.html"
 
-# pages/*.html에서 sibling 정적 페이지로 이동하는 항목 (data-page 매핑)
-EXTERNAL_PAGES = {
-    "youtube.html": "youtube",
-    "wikimedia.html": "wikimedia",
-    "notebooklm.html": "notebooklm",
-}
+# 외부 자료 메뉴는 학습 문서 안의 링크로 통합했다.
+EXTERNAL_PAGES: dict[str, str] = {}
 
 
 def add_href(match: re.Match) -> str:

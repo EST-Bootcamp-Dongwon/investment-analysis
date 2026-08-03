@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MongoDB에 퀴즈 데이터(Day 1–15, 총 450문항)를 적재합니다.
+# MongoDB에 퀴즈 데이터를 적재합니다.
 # 이미 존재하는 문항은 건너뜁니다(upsert).
 set -euo pipefail
 
@@ -11,10 +11,11 @@ MONGODB_COLLECTION="${MONGODB_COLLECTION:-quiz_questions}"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--sql-file <path>]
+Usage: $(basename "$0") [--sql-file <path>] [--replace]
 
 Options:
   --sql-file <path>   사용할 SQL 파일 경로 (기본: app/backend/quiz_seed.sql)
+  --replace           기존 퀴즈 문항을 모두 삭제한 뒤 시드 데이터로 교체
   -h, --help          도움말 출력
 
 환경 변수:
@@ -24,6 +25,7 @@ Options:
 EOF
 }
 
+REPLACE=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --sql-file)
@@ -32,6 +34,8 @@ while [[ $# -gt 0 ]]; do
         usage; exit 1
       fi
       SQL_FILE="$2"; shift 2 ;;
+    --replace)
+      REPLACE=true; shift ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -87,7 +91,17 @@ mongosh "$MONGODB_URL/$MONGODB_DB" --quiet \
 mongosh "$MONGODB_URL/$MONGODB_DB" --quiet \
   --eval "db.getCollection('$MONGODB_COLLECTION').createIndex({day:1,question_no:1},{unique:true});" >/dev/null
 
-mongosh "$MONGODB_URL/$MONGODB_DB" --quiet --eval "
+if [[ "$REPLACE" == true ]]; then
+  mongosh "$MONGODB_URL/$MONGODB_DB" --quiet --eval "
+const fs = require('fs');
+const docs = JSON.parse(fs.readFileSync('$TMP_JSON', 'utf8'));
+const coll = db.getCollection('$MONGODB_COLLECTION');
+const removed = coll.deleteMany({}).deletedCount;
+if (docs.length) coll.insertMany(docs);
+printjson({ replaced: true, removed, total: coll.countDocuments({}) });
+"
+else
+  mongosh "$MONGODB_URL/$MONGODB_DB" --quiet --eval "
 const fs = require('fs');
 const docs = JSON.parse(fs.readFileSync('$TMP_JSON', 'utf8'));
 const coll = db.getCollection('$MONGODB_COLLECTION');
@@ -102,5 +116,6 @@ for (const doc of docs) {
 }
 printjson({ inserted, total: coll.countDocuments({}) });
 "
+fi
 
-echo "[OK] MongoDB 초기화/데이터 적재 완료 (Day 1–15, 총 450문항)"
+echo "[OK] MongoDB 초기화/데이터 적재 완료"

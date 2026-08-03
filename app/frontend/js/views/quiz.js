@@ -1,27 +1,34 @@
 /**
- * quiz.js — 투자자산운용사 시험 퀴즈 뷰
- * 일자별 30문항, 정오답 표기, 해설, 문항 편집 기능
+ * quiz.js — 주식상식 시험 퀴즈 뷰
+ * 주식 1~5별 4문항(총 20문항), 정오답 표기, 해설, 문항 편집 기능
  */
 
 const DAY_TOPICS = {
-  1:  '법인·세금·금리 통합 모의고사 (docs 01·02)',
-  2:  '경제지표 분석 — 물가·유가 (docs 03)',
-  3:  '거시경제 상황 분석 실습 (docs 04)',
-  4:  '산업 분석 (docs 05)',
-  5:  '산업 분석 실습 (docs 06)',
-  6:  '재무제표 분석 I — 손익·대차 (docs 07)',
-  7:  '재무제표 분석 II — 현금흐름·기업가치 (docs 08)',
-  8:  '상대가치 평가 — 밸류에이션 멀티플 (docs 09)',
-  9:  '기술적 분석 I — 추세·지표 (docs 10)',
-  10: '기술적 분석 II — 패턴·엘리어트 (docs 11)',
-  11: '주식·배당·금융상품 기초 (docs 12)',
-  12: '금융상품 구분 — 자본시장법 (docs 13)',
-  13: 'ETF 심화 — 일반펀드 vs ETF (docs 14)',
-  14: '포트폴리오 이론 및 성과 분석 (docs 15)',
-  15: '자산배분 모델·금융 규제 (docs 16·17)',
+  1: '주식 1',
+  2: '주식 2',
+  3: '주식 3',
+  4: '주식 4',
+  5: '주식 5',
 };
-const QUESTIONS_PER_DAY = 30;
+const QUESTIONS_PER_DAY = 4;
 const TOTAL_DAYS = Object.keys(DAY_TOPICS).length;
+const QUIZ_CONTENT_VERSION = 'stock-learning-2026-08-01-v1';
+
+// 문항 개편 뒤 처음 접속한 사용자는 이전 문항 ID로 저장된 답안을 제거한다.
+// 같은 버전에서는 다시 지우지 않아 학습 중인 답안은 유지된다.
+function resetProgressForNewQuizVersion() {
+  try {
+    if (localStorage.getItem('quiz_content_version') === QUIZ_CONTENT_VERSION) return;
+    Object.keys(localStorage)
+      .filter((key) => key.startsWith('quiz_progress_day'))
+      .forEach((key) => localStorage.removeItem(key));
+    localStorage.setItem('quiz_content_version', QUIZ_CONTENT_VERSION);
+  } catch {
+    // 저장소를 사용할 수 없는 환경에서는 기존처럼 현재 세션에서만 동작한다.
+  }
+}
+
+resetProgressForNewQuizVersion();
 
 // progress stored per-day in localStorage
 function loadProgress(day) {
@@ -45,7 +52,7 @@ export function quizHomeView(app, navigate) {
     const pct = prog ? Math.round(answered / QUESTIONS_PER_DAY * 100) : 0;
     return `
       <div class="plan-card${done ? ' done' : ''}" onclick="navigate('quiz-day-${d}')">
-        <div class="plan-day">Day ${d}</div>
+      <div class="plan-day">주식 ${d}</div>
         <div class="plan-topic">${topic}</div>
         <div class="plan-count">
           ${done
@@ -72,10 +79,10 @@ export function quizHomeView(app, navigate) {
     <div style="margin-bottom:24px;">
       <h2 style="margin:0 0 4px;font-size:1.25rem;font-weight:800">
         <i class="fa-solid fa-calendar-check" style="color:var(--primary);margin-right:8px;"></i>
-        일자별 통합 모의고사
+        주식 기초 통합 퀴즈
       </h2>
       <p style="font-size:.85rem;color:var(--text-muted);margin:0">
-        일자별 30문항 시험 · 정오답 즉시 확인 · 해설 보기 · 수험자 문항 수정 모드
+        주식 1~5별 4문항, 총 20문항 · 정오답 즉시 확인 · 해설 보기
       </p>
     </div>
 
@@ -112,12 +119,12 @@ export function quizDayView(app, day, navigate) {
     app.innerHTML = `
       <div class="card" style="text-align:center;padding:48px 24px;">
         <div style="font-size:2.5rem;margin-bottom:16px;"><i class="fa-solid fa-lock" style="color:var(--text-muted)"></i></div>
-        <h3 style="margin:0 0 8px;font-size:1.1rem;font-weight:800">Day ${day} 잠금됨</h3>
+        <h3 style="margin:0 0 8px;font-size:1.1rem;font-weight:800">주식 ${day} 잠금됨</h3>
         <p style="font-size:.88rem;color:var(--text-muted);margin:0 0 24px;">
-          Day ${day - 1} 시험을 완료해야 접근할 수 있습니다.
+          주식 ${day - 1} 퀴즈를 완료해야 접근할 수 있습니다.
         </p>
         <button class="btn btn-primary" id="go-prev-day">
-          <i class="fa-solid fa-arrow-left"></i> Day ${day - 1} 시험 보러 가기
+          <i class="fa-solid fa-arrow-left"></i> 주식 ${day - 1} 퀴즈 보러 가기
         </button>
       </div>`;
     app.querySelector('#go-prev-day').onclick = () => navigate(`quiz-day-${day - 1}`);
@@ -149,7 +156,7 @@ export function quizDayView(app, day, navigate) {
 }
 
 function renderQuiz(app, day, questions, navigate) {
-  const topic = DAY_TOPICS[day] || `Day ${day}`;
+  const topic = DAY_TOPICS[day] || `주식 ${day}`;
   const prog = loadProgress(day) || { answers: {}, score: 0, finished: false };
 
   // state
@@ -178,9 +185,9 @@ function renderQuiz(app, day, questions, navigate) {
         <div>
           <h2 style="margin:0 0 2px;font-size:1.1rem;font-weight:800">
             <i class="fa-solid fa-circle-question" style="color:var(--primary);margin-right:7px;"></i>
-            Day ${day} · ${topic}
+            주식 ${day} · ${topic}
           </h2>
-          <div style="font-size:.78rem;color:var(--text-muted)">${QUESTIONS_PER_DAY}문항 · 투자자산운용사 대비</div>
+          <div style="font-size:.78rem;color:var(--text-muted)">${QUESTIONS_PER_DAY}문항 · 주식상식 대비</div>
         </div>
         <div class="quiz-score-bar">
           <span><i class="fa-solid fa-check" style="color:var(--green)"></i> <span class="score-correct">${correctCount}</span></span>
@@ -255,7 +262,7 @@ function renderQuiz(app, day, questions, navigate) {
     window.prevQ = () => { if (current > 0) { current--; render(); } };
     window.nextQ = () => { if (current < questions.length - 1) { current++; render(); } };
     window.resetQuiz = () => {
-      if (confirm(`Day ${day} 진행 상황을 초기화하시겠습니까?`)) {
+      if (confirm(`주식 ${day} 퀴즈 진행 상황을 초기화하시겠습니까?`)) {
         clearProgress(day); prog.answers = {}; prog.score = 0; prog.finished = false; current = 0; render();
       }
     };
@@ -299,7 +306,7 @@ function renderQuiz(app, day, questions, navigate) {
 
     app.innerHTML = `
       <div class="quiz-result">
-        <div style="font-size:.85rem;color:var(--text-muted);margin-bottom:8px;">Day ${day} · ${topic} 결과</div>
+        <div style="font-size:.85rem;color:var(--text-muted);margin-bottom:8px;">주식 ${day} · ${topic} 결과</div>
         <div class="result-score">${pct}%</div>
         <div class="result-label" style="color:${gradeColor};">${grade}</div>
         <div class="result-stats">
@@ -325,7 +332,7 @@ function renderQuiz(app, day, questions, navigate) {
           </button>
           ${day < TOTAL_DAYS
             ? `<button class="btn btn-success" onclick="goNextDay()">
-                Day ${day + 1} 시작 <i class="fa-solid fa-arrow-right"></i>
+                주식 ${day + 1} 시작 <i class="fa-solid fa-arrow-right"></i>
               </button>`
             : `<button class="btn btn-success" onclick="navigate('quiz-home')">
                 <i class="fa-solid fa-trophy"></i> 전체 결과

@@ -36,6 +36,8 @@ export async function apiFetch(path, options = {}) {
 
 export const api = {
   health:           ()      => apiFetch('/api/health'),
+  systemResources:  ()      => apiFetch('/api/system/resources'),
+  visitorHeartbeat: (body)  => apiFetch('/api/visitors/heartbeat',         { method: 'POST', body: JSON.stringify(body) }),
   crossValidation:  (body)  => apiFetch('/api/ml/cross-validation',        { method: 'POST', body: JSON.stringify(body) }),
   decisionBoundary: ()      => apiFetch('/api/ml/decision-boundary'),
   randomForest:     (body)  => apiFetch('/api/ml/random-forest',           { method: 'POST', body: JSON.stringify(body) }),
@@ -55,6 +57,7 @@ export const api = {
   pipeline:         (body)  => apiFetch('/api/quant/pipeline',             { method: 'POST', body: JSON.stringify(body) }),
   financialKnowledge:(body) => apiFetch('/api/quant/financial-knowledge',   { method: 'POST', body: JSON.stringify(body) }),
   marketSnapshot:   (body)  => apiFetch('/api/market/snapshot',             { method: 'POST', body: JSON.stringify(body) }),
+  marketVolumeCloud:(market) => apiFetch(`/api/market/volume-cloud?market=${encodeURIComponent(market)}`),
   macroRealtime:    (body)  => apiFetch('/api/macro/realtime',              { method: 'POST', body: JSON.stringify(body) }),
   macroSimulation:  (body)  => apiFetch('/api/macro/simulation',            { method: 'POST', body: JSON.stringify(body) }),
   dartCompanySearch:(body)  => apiFetch('/api/dart/company-search',         { method: 'POST', body: JSON.stringify(body) }),
@@ -70,7 +73,4 @@ export const api = {
   dartFinancialAnalysis: (body) => apiFetch('/api/dart/financial-analysis', { method: 'POST', body: JSON.stringify(body) }),
   taxSample:        ()      => apiFetch('/api/tax/sample'),
   taxSimulate:      (body)  => apiFetch('/api/tax/simulate',               { method: 'POST', body: JSON.stringify(body) }),
-  ollamaStatus:     ()      => apiFetch('/api/ollama/status'),
-  ollamaChat:       (body)  => apiFetch('/api/ollama/chat',                { method: 'POST', body: JSON.stringify(body) }),
-  ollamaPull:       (body)  => apiFetch('/api/ollama/pull',                { method: 'POST', body: JSON.stringify(body) }),
 };
