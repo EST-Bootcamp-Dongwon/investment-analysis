@@ -14,10 +14,13 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # 강사님 원본이 아니라 작업본(fork)을 배포한다. 원본을 받으면
+      # 커스터마이징한 코드가 아닌 강의 원본이 올라가 버린다.
       - name: Check out stock-coin-trade source
         uses: actions/checkout@v4
         with:
-          repository: edumgt/stock-coin-trade
+          repository: EST-Bootcamp-Dongwon/stock-coin-trade
+          ref: main
           path: stock-coin-trade
 
       - name: Configure SSH
@@ -43,7 +46,11 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
 
-      - name: Configure application and Nginx
+      # 개인 도메인이 없으므로 호스트 nginx·HTTPS 설정은 하지 않는다.
+      # frontend 컨테이너 안의 nginx 가 API 프록시까지 모두 처리하므로
+      # 포트(3000)만 열어 두면 그대로 접속된다.
+      # investment-analysis 는 8801 을 쓰므로 포트가 겹치지 않는다.
+      - name: Configure and start application
         run: |
           cat > /tmp/stock-trade.override.yml <<'EOF'
           services:
@@ -52,51 +59,19 @@ jobs:
                 SECRET_KEY: ${SECRET_KEY}
           EOF
 
-          cat > /tmp/st.edumgt.co.kr <<'EOF'
-          server {
-              listen 80;
-              server_name st.edumgt.co.kr;
-
-              location / {
-                  proxy_pass http://127.0.0.1:3000;
-                  proxy_http_version 1.1;
-                  proxy_set_header Host $host;
-                  proxy_set_header X-Real-IP $remote_addr;
-                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                  proxy_set_header X-Forwarded-Proto $scheme;
-                  proxy_set_header Upgrade $http_upgrade;
-                  proxy_set_header Connection "upgrade";
-              }
-          }
-          EOF
-
           scp -i ~/.ssh/deploy_key /tmp/stock-trade.override.yml "$SSH_USER@$SSH_HOST:/tmp/stock-trade.override.yml"
-          scp -i ~/.ssh/deploy_key /tmp/st.edumgt.co.kr "$SSH_USER@$SSH_HOST:/tmp/st.edumgt.co.kr"
           ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" '
             set -e
             sudo install -m 644 /tmp/stock-trade.override.yml /opt/stock-coin-trade/docker-compose.prod.yml
+            # 이 서버의 sudo 는 환경변수를 자식 프로세스로 넘기지 않는다(Ubuntu 26.04 sudo-rs).
+            # 그래서 비밀값은 반드시 compose 프로젝트 디렉터리의 .env 파일로 전달한다.
             if [ ! -f /opt/stock-coin-trade/.env ]; then
               umask 077
               printf "SECRET_KEY=%s\n" "$(openssl rand -hex 32)" > /opt/stock-coin-trade/.env
             fi
-            sudo docker network inspect shared-net >/dev/null 2>&1 || sudo docker network create shared-net
             cd /opt/stock-coin-trade
             sudo docker compose -p stock-coin-trade -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-            sudo install -m 644 /tmp/st.edumgt.co.kr /etc/nginx/sites-available/st.edumgt.co.kr
-            sudo ln -sfn /etc/nginx/sites-available/st.edumgt.co.kr /etc/nginx/sites-enabled/st.edumgt.co.kr
-            sudo nginx -t
-            sudo systemctl reload nginx
-          '
-        env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-
-      - name: Issue or renew HTTPS certificate
-        run: |
-          ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" '
-            sudo apt-get update
-            sudo apt-get install -y certbot python3-certbot-nginx
-            sudo certbot --nginx -d st.edumgt.co.kr --redirect --non-interactive --agree-tos --email info@edumgt.co.kr
+            sudo docker image prune -f
           '
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
@@ -105,8 +80,13 @@ jobs:
       - name: Verify deployed service
         run: |
           ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" '
-            curl --fail --silent --show-error http://127.0.0.1:3000/api/stocks/list >/dev/null
-            curl --fail --silent --show-error --resolve st.edumgt.co.kr:443:127.0.0.1 https://st.edumgt.co.kr/api/stocks/list >/dev/null
+            for i in $(seq 1 30); do
+              curl --fail --silent --show-error http://127.0.0.1:3000/ >/dev/null && exit 0
+              sleep 5
+            done
+            echo "헬스체크 실패"
+            sudo docker compose -p stock-coin-trade logs --tail 50
+            exit 1
           '
         env:
           SSH_USER: ${{ secrets.SSH_USER }}

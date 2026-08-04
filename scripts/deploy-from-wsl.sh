@@ -10,7 +10,9 @@
 set -euo pipefail
 
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/investment-analysis-key.pem}"
-SSH_TARGET="${SSH_TARGET:-ubuntu@13.125.35.226}"
+# 인스턴스를 중지했다 켜면 퍼블릭 IP 가 바뀐다. 탄력적 IP 를 붙이기 전까지는
+# IP 가 바뀔 때마다 아래 기본값을 고치거나 SSH_TARGET 환경변수로 넘겨서 쓴다.
+SSH_TARGET="${SSH_TARGET:-ubuntu@13.209.72.115}"
 DEPLOY_PATH="${DEPLOY_PATH:-/opt/investment-analysis}"
 IMAGE_TAG="${IMAGE_TAG:-investment-analysis-backend:local}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
