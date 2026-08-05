@@ -7,3 +7,6 @@ __pycache__/
 .claude/
 .venv/
 play**/
+
+# 개인 작업 메모 (수업 일정·할 일 — 모노레포 learning/ 쪽에 기록한다)
+todo.md
