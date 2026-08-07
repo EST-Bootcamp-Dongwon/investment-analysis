@@ -1,9 +1,33 @@
 from __future__ import annotations
 
+import base64
+import io
+
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+# 이 모듈은 아래 이름들을 쓰면서 import·정의가 통째로 빠져 있어 /api/quant/* 6개 중
+# 5개가 전부 500 이었다 (2026-08-07 pyflakes 로 확인, undefined name 11건).
+#   - io · base64  : 차트를 base64 로 실어 보내는 5곳에서 쓴다
+#   - configure_matplotlib_korean_font : ml.py 것을 가져다 쓴다
+#   - _calc_rsi    : main.py 에 있지만 main → quant 방향 import 라 가져오면 순환이 된다.
+#                    ml.py 가 폰트 함수를 자체 보유하는 것과 같은 방식으로 아래에 복사했다.
+# 이중 경로 import 는 main.py 의 라우터 import 와 같은 이유다 (`uvicorn main:app` 도 지원).
+try:
+    from .ml import configure_matplotlib_korean_font
+except ImportError:  # Allows `uvicorn main:app` from app/backend.
+    from ml import configure_matplotlib_korean_font  # type: ignore
+
 router = APIRouter()
+
+
+def _calc_rsi(series: "pd.Series", period: int = 14) -> "pd.Series":
+    import pandas as pd
+    delta = series.diff()
+    gain = delta.clip(lower=0).rolling(period).mean()
+    loss = (-delta.clip(upper=0)).rolling(period).mean()
+    rs = gain / loss.replace(0, 1e-9)
+    return 100 - (100 / (1 + rs))
 
 
 class BacktestRequest(BaseModel):
