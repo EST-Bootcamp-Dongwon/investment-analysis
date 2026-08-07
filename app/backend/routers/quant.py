@@ -35,7 +35,60 @@ class FinancialKnowledgeRequest(BaseModel):
     risk_free: float = Field(default=0.03, ge=0.0, le=0.1)
 
 
+class PortfolioScenarioRequest(BaseModel):
+    profile: str = Field(default="balanced", pattern="^(stable|balanced|growth)$")
+    initial_amount: int = Field(default=10_000_000, ge=0, le=1_000_000_000)
+    monthly_amount: int = Field(default=500_000, ge=0, le=100_000_000)
+    years: int = Field(default=10, ge=1, le=30)
+
+
 # ─── Quant Endpoints ──────────────────────────────────────────────────────────
+
+@router.post("/api/quant/portfolio-scenario")
+def portfolio_scenario(req: PortfolioScenarioRequest) -> dict[str, object]:
+    """Educational Monte Carlo projection for a simple portfolio profile."""
+    import numpy as np
+
+    # These are illustrative assumptions, not forecasts or investable expected returns.
+    profiles = {
+        "stable": {"label": "안정 중심", "return": 0.045, "volatility": 0.07},
+        "balanced": {"label": "균형 중심", "return": 0.065, "volatility": 0.12},
+        "growth": {"label": "성장 중심", "return": 0.085, "volatility": 0.18},
+    }
+    config = profiles[req.profile]
+    rng = np.random.default_rng(20260806)
+    paths = 5_000
+    balances = np.full(paths, float(req.initial_amount))
+    monthly_return = (1 + config["return"]) ** (1 / 12) - 1
+    monthly_volatility = config["volatility"] / np.sqrt(12)
+    points = [{"year": 0, "cautious": int(req.initial_amount), "middle": int(req.initial_amount), "positive": int(req.initial_amount)}]
+
+    for month in range(1, req.years * 12 + 1):
+        changes = rng.normal(monthly_return, monthly_volatility, paths)
+        balances = np.maximum(0, (balances + req.monthly_amount) * (1 + changes))
+        if month % 12 == 0:
+            cautious, middle, positive = np.percentile(balances, [10, 50, 90])
+            points.append({
+                "year": month // 12,
+                "cautious": int(round(cautious)),
+                "middle": int(round(middle)),
+                "positive": int(round(positive)),
+            })
+
+    total_paid = req.initial_amount + req.monthly_amount * req.years * 12
+    final = points[-1]
+    return {
+        "profile_label": config["label"],
+        "years": req.years,
+        "total_paid": int(total_paid),
+        "points": points,
+        "summary": {
+            "cautious": final["cautious"],
+            "middle": final["middle"],
+            "positive": final["positive"],
+        },
+        "explanation": "같은 구성이라도 시장 흐름에 따라 결과가 달라질 수 있음을 보여주는 학습용 가상 시나리오입니다.",
+    }
 
 @router.post("/api/quant/backtest")
 def quant_backtest(req: BacktestRequest) -> dict[str, object]:
@@ -643,5 +696,4 @@ def quant_pipeline(req: PipelineRequest) -> dict[str, object]:
         "metrics": {"cagr": round(cagr, 4), "sharpe": round(sharpe, 2), "mdd": round(mdd, 4), "ml_accuracy": round(ml_acc, 4)},
         "ticker": req.ticker,
     }
-
 

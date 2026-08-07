@@ -16,6 +16,9 @@ import { lstmView }            from './views/lstm.js';
 import { transformerView }     from './views/transformer.js';
 import { backtestView }        from './views/backtest.js';
 import { portfolioView }       from './views/portfolio.js';
+import { portfolioCombinationView } from './views/portfolioCombination.js';
+import { portfolioGuideView } from './views/portfolioGuide.js';
+import { portfolioSimulationView } from './views/portfolioSimulation.js';
 import { pipelineView }        from './views/pipeline.js';
 import { riskView }            from './views/risk.js';
 import { huggingfaceView }     from './views/huggingface.js';
@@ -32,6 +35,8 @@ import { technicalChartView }  from './views/technicalChart.js';
 import { financialKnowledgeView } from './views/financialKnowledge.js';
 import { investmentTreeView }   from './views/investmentTree.js';
 import { quizHomeView, quizDayView } from './views/quiz.js';
+import { vocabularyExamView } from './views/vocabularyExam.js';
+import { ragChatView } from './views/ragChat.js';
 import { companyFinancialView } from './views/companyFinancial.js';
 import { learnView }            from './views/learn.js';
 import { taxAccountingView }         from './views/taxAccounting.js';
@@ -80,6 +85,9 @@ const routes = {
   'transformer':       { label: 'Transformer',            render: () => transformerView(app) },
   'backtest':          { label: '백테스트 엔진',          render: () => backtestView(app) },
   'portfolio':         { label: '포트폴리오 최적화',      render: () => portfolioView(app) },
+  'portfolio-combination': { label: '포트폴리오 조합',    render: () => portfolioCombinationView(app) },
+  'portfolio-guide':       { label: '포트폴리오 추천',    render: () => portfolioGuideView(app) },
+  'portfolio-simulation':  { label: '포트폴리오 시뮬레이션', render: () => portfolioSimulationView(app) },
   'pipeline':          { label: '퀀트 파이프라인',        render: () => pipelineView(app) },
   'risk':              { label: '리스크 분석 (VaR)',       render: () => riskView(app) },
   'huggingface':       { label: 'HuggingFace 이미지 생성', render: () => huggingfaceView(app) },
@@ -99,6 +107,8 @@ const routes = {
   'tax-accounting':              { label: '세무·회계 시뮬레이션',         render: () => taxAccountingView(app) },
   'dart-financial-analysis':    { label: 'DART 재무 AI 분석',             render: () => dartFinancialAnalysisView(app) },
   'quiz-home':           { label: '퀴즈 · 통합 모의고사',        render: () => quizHomeView(app, navigate) },
+  'vocabulary-exam':     { label: '퀴즈 · 단어장 30문제 시험',   render: () => vocabularyExamView(app, navigate) },
+  'rag-chat':            { label: '문서 검색 채팅',              render: () => ragChatView(app) },
   ...quizDayRoutes,
   ...learnRoutes,
 };
@@ -151,6 +161,10 @@ const PRACTICE_GUIDES = {
   'portfolio': {
     technique: '몬테카를로 시뮬레이션',
     text: '자산을 섞는 방법을 아주 많이 만들어 보고, 수익과 위험의 균형이 좋은 조합을 찾습니다. 여러 재료로 음료를 만들어 가장 알맞은 맛을 고르는 것과 같습니다.',
+  },
+  'portfolio-combination': {
+    technique: '두 종목 움직임 비교',
+    text: '선택한 두 종목이 같은 날에 얼마나 비슷하게 움직였는지 최근 가격 흐름으로 살펴봅니다. 신호등은 함께 담을 때 기대할 수 있는 분산 효과를 쉽게 보여주는 참고 정보입니다.',
   },
   'risk': {
     technique: 'VaR·CVaR 손실 추정',
@@ -255,18 +269,19 @@ function navigate(view) {
   // 현재 화면이 속한 사이드바 섹션만 펼치고 나머지는 닫는다 (사용 중인 메뉴만 열림)
   const _practiceViews = ['macro-realtime','macro-simulation','kospi-excluded','industry-analysis',
     'dart-region-search','group-network','company-financial','financial-statement','valuation',
-    'portfolio','risk','technical-chart','backtest','pipeline','cross-validation','random-forest',
+    'portfolio','portfolio-combination','portfolio-guide','portfolio-simulation','risk','technical-chart','backtest','pipeline','cross-validation','random-forest',
     'kmeans','svm','mlp','linear-regression','lstm','transformer','market-snapshot','financial-knowledge'];
   const _aiViews = ['dart-financial-analysis','dart-company-search','tax-accounting'];
   const activeSections = [];
   if (['learn-10', 'learn-11'].includes(view)) activeSections.push('review');
   else if (view?.startsWith('learn-')) activeSections.push('learn');
-  if (view?.startsWith('quiz-')) activeSections.push('quiz');
+  if (view?.startsWith('quiz-') || view === 'vocabulary-exam') activeSections.push('quiz');
+  if (['server-resources', 'world-markets', 'volume-cloud'].includes(view)) activeSections.push('visualization');
   if (_practiceViews.includes(view)) activeSections.push('practice');
   if (_aiViews.includes(view)) activeSections.push('aitools');
   if (typeof window._setActiveNavSections === 'function') window._setActiveNavSections(activeSections);
 
-  if (view?.startsWith('quiz-')) updateQuizSidebarLock();
+  if (view?.startsWith('quiz-') || view === 'vocabulary-exam') updateQuizSidebarLock();
 
   route.render();
   // MongoDB를 사용하지 않는 화면의 사용자 입력은 화면별로 브라우저에 보관한다.

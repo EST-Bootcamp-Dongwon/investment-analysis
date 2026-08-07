@@ -4,7 +4,7 @@
  */
 const DESKTOP_BREAKPOINT = 1024;
 let _sidebarOpen = window.innerWidth > DESKTOP_BREAKPOINT;
-const MENU_SECTION_ORDER = ['learn', 'review', 'quiz'];
+const MENU_SECTION_ORDER = ['learn', 'review', 'quiz', 'visualization'];
 
 // SPA와 정적 페이지가 같은 메뉴 순서를 유지하도록 실제 DOM 순서를 맞춘다.
 function orderSidebarSections() {
@@ -25,37 +25,53 @@ function orderSidebarSections() {
 window._orderSidebarSections = orderSidebarSections;
 
 function ensureSidebarChatbot() {
-  const sidebar = document.getElementById('sidebar');
-  if (!sidebar || sidebar.querySelector('#sidebar-chatbot')) return;
+  if (document.getElementById('floating-chatbot')) return;
 
-  sidebar.insertAdjacentHTML('beforeend', `
-    <section class="sidebar-chatbot" id="sidebar-chatbot" aria-label="AI 투자 도우미">
-      <div class="sidebar-chatbot-head">
-        <span><i class="fa-solid fa-robot"></i> AI 투자 도우미</span>
-        <em>Enterprise</em>
+  document.body.insertAdjacentHTML('beforeend', `
+    <section class="floating-chatbot" id="floating-chatbot" aria-label="AI 투자 도우미">
+      <div class="floating-chatbot-panel" id="floating-chatbot-panel" hidden>
+        <header class="floating-chatbot-head">
+          <span><i class="fa-solid fa-robot"></i> AI 투자 도우미</span>
+          <button type="button" id="floating-chatbot-close" aria-label="대화창 닫기"><i class="fa-solid fa-xmark"></i></button>
+        </header>
+        <div class="floating-chatbot-messages" id="floating-chatbot-messages" aria-live="polite">
+          <p class="floating-chatbot-welcome">투자와 종목에 관한 궁금한 내용을 입력해 보세요.</p>
+        </div>
+        <form class="floating-chatbot-form" id="floating-chatbot-form">
+          <input id="floating-chatbot-input" type="text" maxlength="300" placeholder="질문을 입력하세요" aria-label="챗봇 질문" />
+          <button type="submit" aria-label="질문 보내기"><i class="fa-solid fa-paper-plane"></i></button>
+        </form>
       </div>
-      <div class="sidebar-chatbot-messages" id="sidebar-chatbot-messages" aria-live="polite">
-        <p class="sidebar-chatbot-welcome">궁금한 내용을 입력해 보세요.</p>
-      </div>
-      <form class="sidebar-chatbot-form" id="sidebar-chatbot-form">
-        <input id="sidebar-chatbot-input" type="text" maxlength="300" placeholder="질문을 입력하세요" aria-label="챗봇 질문" />
-        <button type="submit" aria-label="질문 보내기"><i class="fa-solid fa-paper-plane"></i></button>
-      </form>
+      <button type="button" class="floating-chatbot-trigger" id="floating-chatbot-trigger" aria-label="AI 투자 도우미 열기" aria-expanded="false">
+        <i class="fa-solid fa-comment-dots"></i><span>AI 투자 도우미</span>
+      </button>
     </section>`);
 
-  const form = document.getElementById('sidebar-chatbot-form');
-  const input = document.getElementById('sidebar-chatbot-input');
-  const messages = document.getElementById('sidebar-chatbot-messages');
+  const panel = document.getElementById('floating-chatbot-panel');
+  const trigger = document.getElementById('floating-chatbot-trigger');
+  const close = document.getElementById('floating-chatbot-close');
+  const form = document.getElementById('floating-chatbot-form');
+  const input = document.getElementById('floating-chatbot-input');
+  const messages = document.getElementById('floating-chatbot-messages');
+  const setOpen = (open) => {
+    panel.hidden = !open;
+    trigger.setAttribute('aria-expanded', String(open));
+    trigger.setAttribute('aria-label', open ? 'AI 투자 도우미 닫기' : 'AI 투자 도우미 열기');
+    if (open) input?.focus();
+  };
+  trigger?.addEventListener('click', () => setOpen(panel.hidden));
+  close?.addEventListener('click', () => setOpen(false));
+
   form?.addEventListener('submit', (event) => {
     event.preventDefault();
     const question = input?.value.trim();
     if (!question || !messages) return;
 
     const userMessage = document.createElement('p');
-    userMessage.className = 'sidebar-chatbot-message is-user';
+    userMessage.className = 'floating-chatbot-message is-user';
     userMessage.textContent = question;
     const enterpriseMessage = document.createElement('p');
-    enterpriseMessage.className = 'sidebar-chatbot-message is-enterprise';
+    enterpriseMessage.className = 'floating-chatbot-message is-enterprise';
     enterpriseMessage.textContent = 'Enterprise 버전입니다.';
     messages.replaceChildren(userMessage, enterpriseMessage);
     input.value = '';

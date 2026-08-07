@@ -39,6 +39,7 @@
           </button>
           <div class="nav-children" id="nav-quiz">
             <a href="../index.html?view=quiz-home" class="nav-item" data-view="quiz-home"><i class="fa-solid fa-calendar-check"></i>문항 관리/응시</a>
+            <a href="../index.html?view=vocabulary-exam" class="nav-item" data-view="vocabulary-exam"><i class="fa-solid fa-spell-check"></i>단어장 30문제 시험</a>
             <div class="nav-group-label">주식 모듈별 20문항</div>
             <a href="../index.html?view=quiz-day-1" class="nav-item" data-view="quiz-day-1"><i class="fa-solid fa-list-check"></i>주식 1</a>
             <a href="../index.html?view=quiz-day-2" class="nav-item" data-view="quiz-day-2"><i class="fa-solid fa-list-check"></i>주식 2</a>
@@ -48,15 +49,29 @@
           </div>
         </div>
 
-        <!-- ─────── 도구 ─────── -->
-        <a href="../index.html?view=server-resources" class="nav-item" data-view="server-resources">
-          <i class="fa-solid fa-server"></i><span>서버 리소스</span>
+        <!-- ─────── 데이터 시각화 ─────── -->
+        <div class="nav-section">
+          <button class="nav-section-hdr" onclick="toggleNav('visualization')">
+            <span><i class="fa-solid fa-chart-pie"></i>데이터 시각화</span>
+            <i class="fa-solid fa-chevron-down nav-chev" id="chev-visualization"></i>
+          </button>
+          <div class="nav-children" id="nav-visualization">
+            <a href="../index.html?view=server-resources" class="nav-item" data-view="server-resources"><i class="fa-solid fa-server"></i>서버 리소스</a>
+            <a href="../index.html?view=world-markets" class="nav-item" data-view="world-markets"><i class="fa-solid fa-earth-americas"></i>세계증시현황</a>
+            <a href="../index.html?view=volume-cloud" class="nav-item" data-view="volume-cloud"><i class="fa-solid fa-cloud"></i>거래량 클라우드</a>
+          </div>
+        </div>
+        <a href="../index.html?view=portfolio-combination" class="nav-item" data-view="portfolio-combination">
+          <i class="fa-solid fa-traffic-light"></i><span>포트폴리오 조합</span>
         </a>
-        <a href="../index.html?view=volume-cloud" class="nav-item" data-view="volume-cloud">
-          <i class="fa-solid fa-cloud"></i><span>거래량 클라우드</span>
+        <a href="../index.html?view=portfolio-guide" class="nav-item" data-view="portfolio-guide">
+          <i class="fa-solid fa-compass"></i><span>포트폴리오 추천</span>
         </a>
-        <a href="../index.html?view=world-markets" class="nav-item" data-view="world-markets">
-          <i class="fa-solid fa-earth-americas"></i><span>세계증시현황</span>
+        <a href="../index.html?view=portfolio-simulation" class="nav-item" data-view="portfolio-simulation">
+          <i class="fa-solid fa-chart-area"></i><span>포트폴리오 시뮬레이션</span>
+        </a>
+        <a href="../index.html?view=rag-chat" class="nav-item" data-view="rag-chat">
+          <i class="fa-solid fa-comments"></i><span>문서 검색 채팅</span>
         </a>
 
       </nav>
