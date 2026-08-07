@@ -40,6 +40,15 @@ def _qdrant_available() -> bool:
         return False
 
 
+def _qdrant_collection_available() -> bool:
+    """Qdrant 연결과 컬렉션 생성 여부를 분리해 확인한다."""
+    try:
+        with urllib.request.urlopen(f"{_QDRANT_URL.rstrip('/')}/collections/{_QDRANT_COLLECTION}", timeout=3) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
 def _hash_embed(text: str, dim: int = 384) -> list[float]:
     """문서 색인 스크립트와 동일한 의존성 없는 384차원 해시 임베딩."""
     vector = [0.0] * dim
@@ -66,7 +75,7 @@ class RagSearchRequest(BaseModel):
 
 
 class RagAskRequest(RagSearchRequest):
-    pass
+    provider: str = Field(default="rag", pattern="^(rag|openai_compatible)$", description="답변 다듬기에 사용할 외부 AI 모듈")
 
 
 def _search(query: str, top_k: int, score_threshold: float) -> list[dict[str, object]]:
@@ -85,6 +94,70 @@ def _search(query: str, top_k: int, score_threshold: float) -> list[dict[str, ob
 def _require_qdrant() -> None:
     if not _qdrant_available():
         raise HTTPException(503, f"Qdrant 서버에 연결할 수 없습니다 ({_QDRANT_URL}). 서버를 실행한 뒤 문서를 색인하세요.")
+    if not _qdrant_collection_available():
+        raise HTTPException(
+            503,
+            "문서 검색용 컬렉션이 아직 없습니다. Docker Compose 환경에서는 "
+            "`docker compose --profile tools run --rm docs-index`로 학습 문서를 먼저 색인하세요.",
+        )
+
+
+def _rag_only_answer(chunks: list[dict[str, object]]) -> str:
+    """검색된 원문만 잘라 정리한다. 생성 모델이나 외부 지식은 사용하지 않는다."""
+    if not chunks:
+        return "관련 문서를 찾지 못했습니다. 다른 표현으로 질문해 보세요."
+    excerpts = []
+    for chunk in chunks[:3]:
+        text = " ".join(str(chunk.get("text", "")).split())
+        if text:
+            excerpts.append(f"• {text[:500]}{'…' if len(text) > 500 else ''}")
+    return "문서에서 찾은 관련 내용입니다. 오른쪽 원문과 함께 확인하세요.\n\n" + "\n\n".join(excerpts)
+
+
+def _openai_compatible_answer(query: str, chunks: list[dict[str, object]]) -> str:
+    """RAG 원문만 근거로 외부 OpenAI 호환 모델이 답변을 다듬도록 한다."""
+    api_key = os.getenv("RAG_LLM_API_KEY")
+    model = os.getenv("RAG_LLM_MODEL")
+    base_url = os.getenv("RAG_LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    if not api_key or not model:
+        raise HTTPException(503, "외부 AI를 사용하려면 RAG_LLM_API_KEY와 RAG_LLM_MODEL을 설정하세요.")
+
+    context = "\n\n".join(
+        f"[출처 {index + 1}: {chunk.get('source_doc', '')} / 조각 {int(chunk.get('chunk_index', 0)) + 1}]\n{chunk.get('text', '')}"
+        for index, chunk in enumerate(chunks)
+    )[:14000]
+    prompt = (
+        "아래 '검색 원문'만 근거로 사용자의 질문에 한국어로 간결하게 답하세요. "
+        "원문에 없는 사실·숫자·투자 조언을 추가하지 말고, 정보가 부족하면 부족하다고 밝히세요. "
+        "출처 번호를 [출처 1]처럼 표시하고 3개 이내의 짧은 문단 또는 목록으로 정리하세요.\n\n"
+        f"사용자 질문: {query}\n\n검색 원문:\n{context}"
+    )
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "당신은 제공된 RAG 문서만 다듬어 설명하는 도우미입니다."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.1,
+    }
+    request = urllib.request.Request(
+        f"{base_url}/chat/completions",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        answer = str(result.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
+        if not answer:
+            raise ValueError("빈 응답")
+        return answer
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")
+        raise HTTPException(502, f"외부 AI 응답 오류({exc.code}): {detail[:200]}") from exc
+    except (urllib.error.URLError, ValueError, KeyError, IndexError) as exc:
+        raise HTTPException(502, f"외부 AI 응답을 받지 못했습니다: {exc}") from exc
 
 
 @router.post("/api/rag/search")
@@ -97,12 +170,14 @@ def rag_search(req: RagSearchRequest) -> dict[str, object]:
 
 @router.post("/api/rag/ask")
 def rag_ask(req: RagAskRequest) -> dict[str, object]:
-    """생성 모델 없이 관련 문서 검색 결과를 반환합니다."""
+    """RAG 검색 결과만으로 답변을 만들고, 선택 시 외부 AI로 문장만 다듬습니다."""
     _require_qdrant()
     chunks = _search(req.query, req.top_k, req.score_threshold)
+    answer = _rag_only_answer(chunks) if req.provider == "rag" else _openai_compatible_answer(req.query, chunks)
     return {
         "query": req.query,
-        "answer": "관련 학습 문서를 찾았습니다. 아래 출처와 내용을 확인하세요.",
+        "answer": answer,
+        "provider": req.provider,
         "embed_method": "hash",
         "sources": chunks,
         "source_count": len(chunks),
@@ -113,8 +188,9 @@ def rag_ask(req: RagAskRequest) -> dict[str, object]:
 def rag_status() -> dict[str, object]:
     """Qdrant 연결 상태와 컬렉션 정보를 반환합니다."""
     available = _qdrant_available()
+    collection_available = available and _qdrant_collection_available()
     info: dict[str, object] = {}
-    if available:
+    if collection_available:
         try:
             result = _qdrant_request("GET", f"/collections/{_QDRANT_COLLECTION}").get("result", {})
             info = {
@@ -124,4 +200,8 @@ def rag_status() -> dict[str, object]:
             }
         except Exception:
             info = {"error": "컬렉션이 없거나 조회 실패"}
-    return {"qdrant": {"available": available, "url": _QDRANT_URL, "collection": _QDRANT_COLLECTION, **info}, "embed_method": "hash"}
+    return {
+        "qdrant": {"available": available, "collection_available": collection_available, "url": _QDRANT_URL, "collection": _QDRANT_COLLECTION, **info},
+        "external_ai": {"openai_compatible_available": bool(os.getenv("RAG_LLM_API_KEY") and os.getenv("RAG_LLM_MODEL"))},
+        "embed_method": "hash",
+    }
