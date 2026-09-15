@@ -106,11 +106,19 @@ jobs:
           DART_API_KEY=$DART_API_KEY
           KOSIS_API_KEY=$KOSIS_API_KEY
           BOK_API_KEY=$BOK_API_KEY
+          AWS_ACCESS_KEY_ID=$LEX_AWS_ACCESS_KEY_ID
+          AWS_SECRET_ACCESS_KEY=$LEX_AWS_SECRET_ACCESS_KEY
+          AWS_REGION=us-east-1
+          LEX_BOT_ID=SE3NCP7NMP
+          LEX_BOT_ALIAS_ID=ZJFW9O3LZM
+          LEX_LOCALE_ID=ko_KR
           EOF
         env:
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
           KOSIS_API_KEY: ${{ secrets.KOSIS_API_KEY }}
           BOK_API_KEY: ${{ secrets.BOK_API_KEY }}
+          LEX_AWS_ACCESS_KEY_ID: ${{ secrets.LEX_AWS_ACCESS_KEY_ID }}
+          LEX_AWS_SECRET_ACCESS_KEY: ${{ secrets.LEX_AWS_SECRET_ACCESS_KEY }}
 
       # Only the compose file + .env travel to the server — the web app
       # itself is pulled from GHCR, not copied over SSH.
@@ -152,13 +160,25 @@ jobs:
           IMAGE: ${{ needs.build.outputs.image }}
 
       - name: Reindex RAG documents
-        if: steps.docs_changed.outputs.changed == 'true'
         run: |
           ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" "
             set -e
             cd $DEPLOY_PATH
             sudo docker compose -f docker-compose.prod.yml exec -T backend \
               bash /app/scripts/upload_docs_to_qdrant.sh
+          "
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          DEPLOY_PATH: /opt/investment-analysis
+
+      - name: Reindex full-text search documents
+        run: |
+          ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" "
+            set -e
+            cd $DEPLOY_PATH
+            sudo docker compose -f docker-compose.prod.yml exec -T backend \
+              python /app/scripts/index_docs_meilisearch.py
           "
         env:
           SSH_USER: ${{ secrets.SSH_USER }}

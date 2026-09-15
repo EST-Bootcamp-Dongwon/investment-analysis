@@ -117,7 +117,7 @@ const STRATEGIES = {
     horizon: '장기 (5년 이상)',
     products: ['TIGER 미국S&P500', 'KODEX 미국나스닥100', 'ACE 미국채10년'],
     tags: ['인덱스투자', '장기복리', '패시브'],
-    tip: '<i class="fa-solid fa-lightbulb"></i> 매달 일정액을 자동 매수(적립식)하면 평균 단가를 낮출 수 있습니다.',
+    tip: '<i class="fa-solid fa-lightbulb"></i> 매달 일정액을 자동 매수(적립식)하면 여러 가격에 매수한 평균 단가가 형성됩니다. 평균 단가가 항상 낮아지는 것은 아닙니다.',
   },
   long_active: {
     emoji: '<i class="fa-solid fa-bullseye"></i>', name: '장기액티브형',

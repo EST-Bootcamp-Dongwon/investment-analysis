@@ -1,7 +1,12 @@
 import { homeView }            from './views/home.js';
 import { serverResourcesView } from './views/serverResources.js';
 import { volumeCloudView }    from './views/volumeCloud.js';
+import { sectorCloudView }    from './views/sectorCloud.js';
 import { worldMarketsView }   from './views/worldMarkets.js';
+import { assetClassesView }   from './views/assetClasses.js';
+import { todayGainersView }   from './views/todayGainers.js';
+import { todaySobujangView }  from './views/todaySobujang.js';
+import { globalCapitalMapView } from './views/globalCapitalMap.js';
 import { crossValidationView } from './views/crossValidation.js';
 import { decisionBoundaryView } from './views/decisionBoundary.js';
 import { randomForestView }    from './views/randomForest.js';
@@ -15,9 +20,11 @@ import { cnnTimeseriesView }   from './views/cnnTimeseries.js';
 import { lstmView }            from './views/lstm.js';
 import { transformerView }     from './views/transformer.js';
 import { backtestView }        from './views/backtest.js';
+import { quantView }           from './views/quant.js';
 import { portfolioView }       from './views/portfolio.js';
 import { portfolioCombinationView } from './views/portfolioCombination.js';
 import { portfolioGuideView } from './views/portfolioGuide.js';
+import { portfolioRegimeView } from './views/portfolioRegime.js';
 import { portfolioSimulationView } from './views/portfolioSimulation.js';
 import { pipelineView }        from './views/pipeline.js';
 import { riskView }            from './views/risk.js';
@@ -37,13 +44,17 @@ import { investmentTreeView }   from './views/investmentTree.js';
 import { quizHomeView, quizDayView } from './views/quiz.js';
 import { vocabularyExamView } from './views/vocabularyExam.js';
 import { ragChatView } from './views/ragChat.js';
+import { llmBenchView } from './views/llmBenchView.js';
 import { companyFinancialView } from './views/companyFinancial.js';
-import { learnView }            from './views/learn.js';
+// 학습 화면 오류 수정본을 기존 ES 모듈 캐시와 분리해 항상 새로 불러온다.
+import { learnView }            from './views/learn.js?v=35';
 import { taxAccountingView }         from './views/taxAccounting.js';
 import { dartFinancialAnalysisView } from './views/dartFinancialAnalysis.js';
 import { api }                 from './api.js';
 import { LEARN_DOCS }          from './data/learnDocs.js';
 import { restoreFormState, saveFormState } from './utils/localState.js';
+import { initChartDrawingOffcanvas } from './utils/chartDrawingOffcanvas.js';
+import { initAuth, recordUsage } from './auth.js';
 
 const app        = document.getElementById('app');
 const breadcrumb = document.getElementById('breadcrumb');
@@ -51,6 +62,113 @@ const TOPBAR_MARKETS = ['^KS11', '^IXIC', 'KRW=X'];
 const TOPBAR_REFRESH_MS = 30_000;
 const VISITOR_HEARTBEAT_MS = 30_000;
 const VISITOR_ID_KEY = 'investment_analysis_visitor_id';
+
+function loadHtml2Canvas() {
+  if (window.html2canvas) return Promise.resolve(window.html2canvas);
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+    script.onload = () => resolve(window.html2canvas);
+    script.onerror = () => reject(new Error('캡처 도구를 불러오지 못했습니다.'));
+    document.head.appendChild(script);
+  });
+}
+
+function initScreenCaptureAssistant() {
+  const fab = document.getElementById('screen-capture-fab');
+  const panel = document.getElementById('screen-capture-panel');
+  if (!fab || !panel) return;
+  const preview = panel.querySelector('[data-capture-preview]');
+  const status = panel.querySelector('[data-capture-status]');
+  const service = panel.querySelector('[data-capture-service]');
+  let imageBlob;
+  let previewUrl;
+
+  const copyImage = async () => {
+    if (!imageBlob || !navigator.clipboard?.write || !window.ClipboardItem) throw new Error('이 브라우저에서는 이미지 클립보드 복사를 지원하지 않습니다.');
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': imageBlob })]);
+  };
+  const capture = async () => {
+    fab.disabled = true;
+    fab.classList.add('is-capturing');
+    status.textContent = '현재 화면을 캡처하고 있습니다…';
+    panel.hidden = false;
+    try {
+      const html2canvas = await loadHtml2Canvas();
+      const canvas = await html2canvas(document.body, {
+        backgroundColor: '#f8fafc',
+        scale: Math.min(window.devicePixelRatio || 1, 2),
+        x: window.scrollX,
+        y: window.scrollY,
+        width: window.innerWidth,
+        height: window.innerHeight,
+        windowWidth: window.innerWidth,
+        windowHeight: window.innerHeight,
+        ignoreElements: (element) => element.dataset?.html2canvasIgnore === 'true',
+      });
+      imageBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      if (!imageBlob) throw new Error('이미지를 만들지 못했습니다.');
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl = URL.createObjectURL(imageBlob);
+      preview.src = previewUrl;
+      try {
+        await copyImage();
+        status.textContent = 'PNG를 클립보드에 복사했습니다. GPT 창에서 Ctrl/⌘+V로 붙여넣으세요.';
+      } catch {
+        status.textContent = '캡처가 준비되었습니다. 아래 버튼으로 PNG를 저장하거나 다시 복사하세요.';
+      }
+    } catch (error) {
+      panel.hidden = false;
+      status.textContent = error.message || '화면 캡처에 실패했습니다.';
+    } finally {
+      fab.disabled = false;
+      fab.classList.remove('is-capturing');
+    }
+  };
+
+  fab.addEventListener('click', capture);
+  panel.querySelector('[data-capture-close]').addEventListener('click', () => { panel.hidden = true; });
+  panel.querySelector('[data-capture-copy]').addEventListener('click', async () => {
+    try { await copyImage(); status.textContent = 'PNG를 클립보드에 다시 복사했습니다. GPT 창에서 Ctrl/⌘+V로 붙여넣으세요.'; }
+    catch (error) { status.textContent = error.message; }
+  });
+  panel.querySelector('[data-capture-download]').addEventListener('click', () => {
+    if (!previewUrl) return;
+    const link = document.createElement('a');
+    link.href = previewUrl;
+    link.download = `investment-analysis-${new Date().toISOString().slice(0, 10)}.png`;
+    link.click();
+  });
+  panel.querySelector('[data-capture-open]').addEventListener('click', () => {
+    if (!imageBlob) { status.textContent = '먼저 캡처하기 버튼을 눌러 이미지를 준비해 주세요.'; return; }
+    window.open(service.value, '_blank', 'noopener,noreferrer');
+    status.textContent = 'GPT 웹을 열었습니다. 새 창에서 Ctrl/⌘+V로 이미지를 붙여넣고 질문하세요.';
+  });
+}
+
+function initGlobalSearch() {
+  const form = document.getElementById('global-search');
+  const input = document.getElementById('global-search-input');
+  const results = document.getElementById('global-search-results');
+  if (!form || !input || !results) return;
+  let timer; let activeRequest = 0;
+  const close = () => { results.hidden = true; results.replaceChildren(); };
+  const renderState = (text) => { results.hidden = false; results.replaceChildren(); const state = document.createElement('p'); state.className = 'global-search-state'; state.textContent = text; results.append(state); };
+  const search = async () => {
+    const query = input.value.trim(); if (query.length < 2) { close(); return; }
+    const requestId = ++activeRequest; renderState('문서를 찾는 중입니다…');
+    try {
+      const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`); const data = await response.json(); if (!response.ok) throw new Error(data.detail || '검색 결과를 불러오지 못했습니다.'); if (requestId !== activeRequest) return;
+      results.replaceChildren(); results.hidden = false;
+      if (!data.hits?.length) { renderState('일치하는 학습 문서를 찾지 못했습니다.'); return; }
+      data.hits.forEach((hit) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'global-search-result'; const title = document.createElement('strong'); title.textContent = hit.title; const snippet = document.createElement('p'); snippet.textContent = hit.snippet || '문서에서 관련 내용을 확인하세요.'; button.append(title, snippet); button.addEventListener('click', () => { close(); input.value = ''; navigate(`learn-${hit.doc_id}`); }); results.append(button); });
+    } catch (error) { if (requestId === activeRequest) renderState(error.message || '검색에 실패했습니다.'); }
+  };
+  input.addEventListener('input', () => { window.clearTimeout(timer); timer = window.setTimeout(search, 180); });
+  form.addEventListener('submit', (event) => { event.preventDefault(); search(); });
+  document.addEventListener('click', (event) => { if (!form.contains(event.target)) close(); });
+  input.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
+}
 
 const learnRoutes = Object.fromEntries(
   LEARN_DOCS.map((doc) => [
@@ -70,7 +188,12 @@ const routes = {
   'home':              { label: '대시보드',               render: () => homeView(app, navigate) },
   'server-resources':  { label: '서버 리소스',             render: () => serverResourcesView(app) },
   'volume-cloud':     { label: '거래량 클라우드',          render: () => volumeCloudView(app) },
+  'sector-cloud':     { label: '섹터별 클라우드',          render: () => sectorCloudView(app) },
   'world-markets':    { label: '세계증시현황',              render: () => worldMarketsView(app) },
+  'asset-classes':    { label: '다양한 기초자산 차트',       render: () => assetClassesView(app) },
+  'today-gainers':    { label: '금일 상승종목',              render: () => todayGainersView(app) },
+  'today-sobujang':   { label: '금일 소부장 종목',           render: () => todaySobujangView(app) },
+  'global-capital-map': { label: '세계 거대자금 지도',       render: () => globalCapitalMapView(app) },
   'cross-validation':  { label: 'Cross Validation',       render: () => crossValidationView(app) },
   'decision-boundary': { label: 'Decision Boundary',      render: () => decisionBoundaryView(app) },
   'random-forest':     { label: 'Random Forest',          render: () => randomForestView(app) },
@@ -84,9 +207,11 @@ const routes = {
   'lstm':              { label: 'LSTM 예측기',            render: () => lstmView(app) },
   'transformer':       { label: 'Transformer',            render: () => transformerView(app) },
   'backtest':          { label: '백테스트 엔진',          render: () => backtestView(app) },
+  'quant-lean':        { label: 'Quant · LEAN 백테스트 리포트', render: () => quantView(app) },
   'portfolio':         { label: '포트폴리오 최적화',      render: () => portfolioView(app) },
   'portfolio-combination': { label: '포트폴리오 조합',    render: () => portfolioCombinationView(app) },
   'portfolio-guide':       { label: '포트폴리오 추천',    render: () => portfolioGuideView(app) },
+  'portfolio-regime':      { label: '자산배분 위험선호도(R1~R5)', render: () => portfolioRegimeView(app) },
   'portfolio-simulation':  { label: '포트폴리오 시뮬레이션', render: () => portfolioSimulationView(app) },
   'pipeline':          { label: '퀀트 파이프라인',        render: () => pipelineView(app) },
   'risk':              { label: '리스크 분석 (VaR)',       render: () => riskView(app) },
@@ -109,6 +234,7 @@ const routes = {
   'quiz-home':           { label: '퀴즈 · 통합 모의고사',        render: () => quizHomeView(app, navigate) },
   'vocabulary-exam':     { label: '퀴즈 · 단어장 30문제 시험',   render: () => vocabularyExamView(app, navigate) },
   'rag-chat':            { label: '문서 검색 채팅',              render: () => ragChatView(app) },
+  'llm-bench':           { label: 'LLM 서빙 방식 비교(AWS)',     render: () => llmBenchView(app) },
   ...quizDayRoutes,
   ...learnRoutes,
 };
@@ -269,14 +395,16 @@ function navigate(view) {
   // 현재 화면이 속한 사이드바 섹션만 펼치고 나머지는 닫는다 (사용 중인 메뉴만 열림)
   const _practiceViews = ['macro-realtime','macro-simulation','kospi-excluded','industry-analysis',
     'dart-region-search','group-network','company-financial','financial-statement','valuation',
-    'portfolio','portfolio-combination','portfolio-guide','portfolio-simulation','risk','technical-chart','backtest','pipeline','cross-validation','random-forest',
+    'risk','technical-chart','backtest','pipeline','cross-validation','random-forest',
     'kmeans','svm','mlp','linear-regression','lstm','transformer','market-snapshot','financial-knowledge'];
+  const _portfolioViews = ['portfolio', 'portfolio-combination', 'portfolio-guide', 'portfolio-simulation'];
   const _aiViews = ['dart-financial-analysis','dart-company-search','tax-accounting'];
   const activeSections = [];
-  if (['learn-10', 'learn-11'].includes(view)) activeSections.push('review');
+  if (['learn-10-1', 'learn-10-2', 'learn-10-3', 'learn-11'].includes(view)) activeSections.push('review');
   else if (view?.startsWith('learn-')) activeSections.push('learn');
   if (view?.startsWith('quiz-') || view === 'vocabulary-exam') activeSections.push('quiz');
-  if (['server-resources', 'world-markets', 'volume-cloud'].includes(view)) activeSections.push('visualization');
+  if (['server-resources', 'world-markets', 'asset-classes', 'today-gainers', 'today-sobujang', 'volume-cloud', 'sector-cloud', 'global-capital-map'].includes(view)) activeSections.push('visualization');
+  if (_portfolioViews.includes(view)) activeSections.push('portfolio');
   if (_practiceViews.includes(view)) activeSections.push('practice');
   if (_aiViews.includes(view)) activeSections.push('aitools');
   if (typeof window._setActiveNavSections === 'function') window._setActiveNavSections(activeSections);
@@ -284,6 +412,7 @@ function navigate(view) {
   if (view?.startsWith('quiz-') || view === 'vocabulary-exam') updateQuizSidebarLock();
 
   route.render();
+  recordUsage(view);
   // MongoDB를 사용하지 않는 화면의 사용자 입력은 화면별로 브라우저에 보관한다.
   // 렌더링 직후 실행해 각 뷰의 기본값 대신 마지막 입력값을 복원한다.
   requestAnimationFrame(() => restoreFormState(view, app));
@@ -299,7 +428,10 @@ app.addEventListener('input', (event) => saveFormState(currentView, app));
 app.addEventListener('change', (event) => saveFormState(currentView, app));
 
 // Wire up sidebar links
+// 'chart-drawing'은 페이지 이동이 아니라 오프캔버스 패널을 여는 위젯이라
+// initChartDrawingOffcanvas()가 별도의 클릭 리스너로 처리한다.
 document.querySelectorAll('.nav-item[data-view], .sidebar-link[data-view]').forEach(a => {
+  if (a.dataset.view === 'chart-drawing') return;
   a.addEventListener('click', (e) => {
     e.preventDefault();
     navigate(a.dataset.view);
@@ -418,6 +550,10 @@ async function refreshVisitorCount() {
 }
 
 checkHealth();
+initScreenCaptureAssistant();
+initGlobalSearch();
+initChartDrawingOffcanvas();
+initAuth().then(() => { if (currentView) recordUsage(currentView); });
 setInterval(checkHealth, 30000);
 refreshTopbarMarkets();
 setInterval(refreshTopbarMarkets, TOPBAR_REFRESH_MS);
@@ -431,4 +567,10 @@ document.addEventListener('visibilitychange', () => {
 // pages/*.html 정적 페이지의 사이드바 링크가 index.html?view=xxx 형태로
 // 돌아오므로, 쿼리스트링에 유효한 view가 있으면 그 화면으로 바로 진입한다.
 const requestedView = new URLSearchParams(window.location.search).get('view');
-navigate(requestedView && routes[requestedView] ? requestedView : 'home');
+if (requestedView === 'chart-drawing') {
+  // 'chart-drawing'은 라우트가 아니라 오프캔버스 위젯이므로, 홈으로 이동한 뒤 패널을 연다.
+  navigate('home');
+  document.querySelector('.nav-item[data-view="chart-drawing"]')?.click();
+} else {
+  navigate(requestedView && routes[requestedView] ? requestedView : 'home');
+}

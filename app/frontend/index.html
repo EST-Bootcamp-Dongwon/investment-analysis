@@ -7,7 +7,7 @@
   <link rel="preload" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" />
   <link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
-  <link rel="stylesheet" href="styles.css?v=13" />
+  <link rel="stylesheet" href="styles.css?v=26" />
 </head>
 <body>
 
@@ -59,6 +59,13 @@
       </span>
     </button>
 
+    <form class="global-search" id="global-search" role="search">
+      <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+      <input id="global-search-input" type="search" autocomplete="off" placeholder="학습 내용 검색" aria-label="학습 문서 검색" />
+      <button type="submit" aria-label="검색"><i class="fa-solid fa-arrow-right"></i></button>
+      <div class="global-search-results" id="global-search-results" hidden aria-live="polite"></div>
+    </form>
+
     <div class="topbar-ticker" aria-label="시장 현황">
       <span class="ticker-item" data-market-label="KOSPI">
         <span class="ticker-label">KOSPI</span><b>-</b><em>조회 중</em>
@@ -81,7 +88,7 @@
       <span id="health-text" class="health-text">확인 중</span>
     </a>
 
-    <button type="button" id="auth-badge" class="auth-badge js-enterprise-gate" aria-label="회원가입 또는 로그인">
+    <button type="button" id="auth-badge" class="auth-badge" aria-label="회원가입 또는 로그인">
       <i class="fa-solid fa-user"></i><span>회원가입/로그인</span>
     </button>
   </header>
@@ -100,6 +107,20 @@
         <a class="nav-item nav-home" data-view="home">
           <i class="fa-solid fa-house"></i><span>대시보드</span>
         </a>
+        <!-- ─────── 기초학습 ─────── -->
+        <div class="nav-section">
+          <button class="nav-section-hdr" onclick="toggleNav('review')">
+            <span><i class="fa-solid fa-book-bookmark"></i>기초학습</span>
+            <i class="fa-solid fa-chevron-down nav-chev" id="chev-review"></i>
+          </button>
+          <div class="nav-children" id="nav-review">
+            <a class="nav-item" data-view="learn-10-1"><i class="fa-solid fa-circle-dot"></i>법인과 회사 구조 1: 시작하기</a>
+            <a class="nav-item" data-view="learn-10-2"><i class="fa-solid fa-circle-dot"></i>법인과 회사 구조 2: 운영·자금</a>
+            <a class="nav-item" data-view="learn-10-3"><i class="fa-solid fa-circle-dot"></i>법인과 회사 구조 3: 세무·회계</a>
+            <a class="nav-item" data-view="learn-11"><i class="fa-solid fa-circle-dot"></i>거시경제와 주식시장</a>
+          </div>
+        </div>
+
         <!-- ─────── 학습 ─────── -->
         <div class="nav-section">
           <button class="nav-section-hdr" onclick="toggleNav('learn')">
@@ -108,22 +129,10 @@
           </button>
           <div class="nav-children" id="nav-learn">
             <a class="nav-item" data-view="learn-03"><i class="fa-solid fa-circle-dot"></i>주식 1</a>
-            <a class="nav-item" data-view="learn-04"><i class="fa-solid fa-circle-dot"></i>주식 2</a>
-            <a class="nav-item" data-view="learn-05"><i class="fa-solid fa-circle-dot"></i>주식 3</a>
+            <a class="nav-item" data-view="learn-05"><i class="fa-solid fa-circle-dot"></i>주식 2<span class="nav-badge-hot">HOT</span></a>
+            <a class="nav-item" data-view="learn-04"><i class="fa-solid fa-circle-dot"></i>주식 3</a>
             <a class="nav-item" data-view="learn-06"><i class="fa-solid fa-circle-dot"></i>주식 4</a>
             <a class="nav-item" data-view="learn-07"><i class="fa-solid fa-circle-dot"></i>주식 5</a>
-          </div>
-        </div>
-
-        <!-- ─────── 지난주 학습 정리 ─────── -->
-        <div class="nav-section">
-          <button class="nav-section-hdr" onclick="toggleNav('review')">
-            <span><i class="fa-solid fa-clock-rotate-left"></i>지난주 학습 정리</span>
-            <i class="fa-solid fa-chevron-down nav-chev" id="chev-review"></i>
-          </button>
-          <div class="nav-children" id="nav-review">
-            <a class="nav-item" data-view="learn-10"><i class="fa-solid fa-circle-dot"></i>법인과 회사 구조</a>
-            <a class="nav-item" data-view="learn-11"><i class="fa-solid fa-circle-dot"></i>거시경제와 주식시장</a>
           </div>
         </div>
 
@@ -154,20 +163,45 @@
           <div class="nav-children" id="nav-visualization">
             <a class="nav-item" data-view="server-resources"><i class="fa-solid fa-server"></i>서버 리소스</a>
             <a class="nav-item" data-view="world-markets"><i class="fa-solid fa-earth-americas"></i>세계증시현황</a>
+            <a class="nav-item" data-view="asset-classes"><i class="fa-solid fa-layer-group"></i>다양한 기초자산 차트</a>
+            <a class="nav-item" data-view="today-gainers"><i class="fa-solid fa-arrow-trend-up"></i>금일 상승종목</a>
+            <a class="nav-item" data-view="today-sobujang"><i class="fa-solid fa-microchip"></i>금일 소부장 종목</a>
+            <a class="nav-item" data-view="global-capital-map"><i class="fa-solid fa-globe"></i>세계 거대자금 지도</a>
             <a class="nav-item" data-view="volume-cloud"><i class="fa-solid fa-cloud"></i>거래량 클라우드</a>
+            <a class="nav-item" data-view="sector-cloud"><i class="fa-solid fa-cloud-arrow-up"></i>섹터별 클라우드</a>
           </div>
         </div>
-        <a class="nav-item" data-view="portfolio-combination">
-          <i class="fa-solid fa-traffic-light"></i><span>포트폴리오 조합</span>
-        </a>
-        <a class="nav-item" data-view="portfolio-guide">
-          <i class="fa-solid fa-compass"></i><span>포트폴리오 추천</span>
-        </a>
-        <a class="nav-item" data-view="portfolio-simulation">
-          <i class="fa-solid fa-chart-area"></i><span>포트폴리오 시뮬레이션</span>
+
+        <!-- ─────── 포트폴리오 ─────── -->
+        <div class="nav-section">
+          <button class="nav-section-hdr" onclick="toggleNav('portfolio')">
+            <span><i class="fa-solid fa-briefcase"></i>포트폴리오</span>
+            <i class="fa-solid fa-chevron-down nav-chev" id="chev-portfolio"></i>
+          </button>
+          <div class="nav-children" id="nav-portfolio">
+            <a class="nav-item" data-view="portfolio-combination"><i class="fa-solid fa-traffic-light"></i>포트폴리오 조합</a>
+            <a class="nav-item" data-view="portfolio-guide"><i class="fa-solid fa-compass"></i>포트폴리오 추천</a>
+            <a class="nav-item" data-view="portfolio-regime"><i class="fa-solid fa-chart-diagram"></i>자산배분 위험선호도(R1~R5)</a>
+            <a class="nav-item" data-view="portfolio-simulation"><i class="fa-solid fa-chart-area"></i>포트폴리오 시뮬레이션</a>
+          </div>
+        </div>
+        <div class="nav-section">
+          <button class="nav-section-hdr" onclick="toggleNav('quant')">
+            <span><i class="fa-solid fa-chart-simple"></i>Quant</span>
+            <i class="fa-solid fa-chevron-down nav-chev" id="chev-quant"></i>
+          </button>
+          <div class="nav-children" id="nav-quant">
+            <a class="nav-item" data-view="quant-lean"><i class="fa-solid fa-flask"></i>LEAN 백테스트 리포트</a>
+          </div>
+        </div>
+        <a class="nav-item" data-view="chart-drawing">
+          <i class="fa-solid fa-pencil"></i><span>드로잉 차트</span>
         </a>
         <a class="nav-item" data-view="rag-chat">
-          <i class="fa-solid fa-comments"></i><span>문서 검색 채팅</span>
+          <i class="fa-solid fa-comments"></i><span>RAG</span>
+        </a>
+        <a class="nav-item" data-view="llm-bench">
+          <i class="fa-solid fa-cloud-bolt"></i><span>LLM 서빙 비교(AWS)</span>
         </a>
 
       </nav>
@@ -187,9 +221,21 @@
 
   </div><!-- /.layout -->
 
+  <button type="button" id="screen-capture-fab" class="screen-capture-fab" aria-label="현재 화면 캡처하기" title="현재 화면을 캡처해 GPT에 질문하기" data-html2canvas-ignore="true">
+    <i class="fa-solid fa-camera"></i><span>캡처하기</span>
+  </button>
+  <section id="screen-capture-panel" class="screen-capture-panel" aria-live="polite" hidden data-html2canvas-ignore="true">
+    <div class="screen-capture-panel-head"><strong><i class="fa-solid fa-image"></i> 캡처 완료</strong><button type="button" data-capture-close aria-label="캡처 패널 닫기"><i class="fa-solid fa-xmark"></i></button></div>
+    <img data-capture-preview alt="현재 화면 캡처 미리보기">
+    <p data-capture-status>이미지를 준비하고 있습니다.</p>
+    <label>질문할 GPT 웹<select data-capture-service><option value="https://chatgpt.com/">ChatGPT</option><option value="https://claude.ai/new">Claude</option><option value="https://gemini.google.com/app">Gemini</option></select></label>
+    <button type="button" class="screen-capture-open" data-capture-open><i class="fa-solid fa-arrow-up-right-from-square"></i> GPT에서 질문하기</button>
+    <div class="screen-capture-actions"><button type="button" data-capture-copy><i class="fa-regular fa-copy"></i> 이미지 다시 복사</button><button type="button" data-capture-download><i class="fa-solid fa-download"></i> PNG 저장</button></div>
+  </section>
+
   <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.54.0/dist/apexcharts.min.js"></script>
   <script src="vendor/mermaid.min.js?v=11.16.0"></script>
-  <script type="module" src="js/app.js?v=10"></script>
-  <script src="js/sidebarUI.js?v=2"></script>
+  <script type="module" src="js/app.js?v=35"></script>
+  <script src="js/sidebarUI.js?v=3"></script>
 </body>
 </html>

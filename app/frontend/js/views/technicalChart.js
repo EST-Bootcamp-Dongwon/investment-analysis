@@ -322,7 +322,7 @@ function renderTrend(content, state) {
             <th style="padding:8px 10px;text-align:left;color:#757575;border-bottom:1px solid #f0f0f0;">매매 관점</th>
           </tr>
           ${[['상승추세','HH·HL 연속, MA 정배열, ADX>25','추세선 저점 매수 / 채널 상단 이익실현'],
-             ['하락추세','LH·LL 연속, MA 역배열, ADX>25','추세선 고점 매도 / 반등 시 공매도'],
+             ['하락추세','LH·LL 연속, MA 역배열, ADX>25','현물 보유자는 비중·손실 한도 점검 / 공매도는 별도 위험관리 필요'],
              ['횡보','가격이 박스권 내 등락, ADX<20','박스권 하단 매수, 상단 이익실현'],
              ['추세 전환','추세선 종가 이탈 + 거래량 폭증','포지션 축소 후 신추세 확인 대기']].map(([g, cd, m]) => `
             <tr style="border-bottom:1px solid #f5f5f5;">
@@ -405,7 +405,7 @@ function renderMA(content, state) {
           </div>`).join('')}
       </div>
       ${info(`<strong>실전 전략:</strong> ${m20 > m60
-        ? `정배열 — MA5가 MA20 위를 유지하는 한 눌림목(MA20 터치)마다 매수 기회.`
+        ? `정배열 — MA5가 MA20 위를 유지하는 동안의 조정은 ‘눌림목’으로 불리기도 합니다. 단, MA20 터치만으로 매수 기회가 확정되지는 않습니다.`
         : `역배열 — 반등 시 MA20이 저항. 데드크로스 확인 후 현금 보유 전략.`}`, '#0078d4')}`;
   });
 }

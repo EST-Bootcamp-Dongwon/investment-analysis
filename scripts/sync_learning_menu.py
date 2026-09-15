@@ -18,13 +18,15 @@ INDEX_HTML = ROOT / "app" / "frontend" / "index.html"
 OUT_MODULE = ROOT / "app" / "frontend" / "js" / "data" / "learnDocs.js"
 LEARN_DOCS = (
     ("03", "주식 1"),
-    ("04", "주식 2"),
-    ("05", "주식 3"),
+    ("05", "주식 2"),
+    ("04", "주식 3"),
     ("06", "주식 4"),
     ("07", "주식 5"),
 )
 REVIEW_DOCS = (
-    ("10", "법인과 회사 구조"),
+    ("10-1", "법인과 회사 구조 1: 시작하기"),
+    ("10-2", "법인과 회사 구조 2: 운영·자금"),
+    ("10-3", "법인과 회사 구조 3: 세무·회계"),
     ("11", "거시경제와 주식시장"),
 )
 
@@ -37,13 +39,17 @@ def title_for(path: Path) -> str:
     return path.stem
 
 
+HOT_DOCS = {"05"}
+
+
 def menu_html(docs: list[dict[str, str]]) -> str:
     rows = []
     for doc in docs:
         icon = "fa-spell-check" if doc["id"] == "voca" else "fa-circle-dot"
+        badge = '<span class="nav-badge-hot">HOT</span>' if doc["id"] in HOT_DOCS else ""
         rows.append(
             f'            <a class="nav-item" data-view="learn-{html.escape(doc["id"])}">'
-            f'<i class="fa-solid {icon}"></i>{html.escape(doc["label"])}</a>'
+            f'<i class="fa-solid {icon}"></i>{html.escape(doc["label"])}{badge}</a>'
         )
     return "\n".join(rows)
 

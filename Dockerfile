@@ -19,9 +19,15 @@ RUN mkdir -p app/frontend/vendor \
     && python -c "import pathlib, urllib.request; pathlib.Path('app/frontend/vendor/mermaid.min.js').write_bytes(urllib.request.urlopen('https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.min.js', timeout=90).read())" \
     && test -s app/frontend/vendor/mermaid.min.js
 COPY docs/ ./docs/
+COPY image/ ./image/
+COPY hyundai-results/ ./hyundai-results/
+COPY lean-results/ ./lean-results/
+# 작업본 추가: Quant 메뉴의 삼성전기 LEAN 탭(routers/lean.py)이 읽는 결과 파일. 원본은 복사하지 않아 404 가 났다.
+COPY samsung-em-results/ ./samsung-em-results/
 COPY scripts/upload_docs_to_qdrant.sh ./scripts/upload_docs_to_qdrant.sh
 COPY scripts/sync_learning_menu.py ./scripts/sync_learning_menu.py
 COPY scripts/build_sidebar_partial.py ./scripts/build_sidebar_partial.py
+COPY scripts/index_docs_meilisearch.py ./scripts/index_docs_meilisearch.py
 RUN chmod +x ./scripts/upload_docs_to_qdrant.sh \
     && python ./scripts/sync_learning_menu.py \
     && python ./scripts/build_sidebar_partial.py

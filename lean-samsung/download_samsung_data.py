@@ -56,6 +56,8 @@ def main() -> None:
         for timestamp, open_, high, low, close, volume in rows:
             if None in (open_, high, low, close, volume):
                 continue
+            if volume == 0:
+                continue  # market holiday placeholder bar
             day = datetime.fromtimestamp(timestamp, timezone.utc).date().isoformat()
             writer.writerow([day, open_, high, low, close, volume])
             written += 1

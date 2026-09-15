@@ -60,6 +60,7 @@ export const api = {
   financialKnowledge:(body) => apiFetch('/api/quant/financial-knowledge',   { method: 'POST', body: JSON.stringify(body) }),
   marketSnapshot:   (body)  => apiFetch('/api/market/snapshot',             { method: 'POST', body: JSON.stringify(body) }),
   marketVolumeCloud:(market) => apiFetch(`/api/market/volume-cloud?market=${encodeURIComponent(market)}`),
+  marketSectorCloud:(market) => apiFetch(`/api/market/sector-cloud?market=${encodeURIComponent(market)}`),
   macroRealtime:    (body)  => apiFetch('/api/macro/realtime',              { method: 'POST', body: JSON.stringify(body) }),
   macroSimulation:  (body)  => apiFetch('/api/macro/simulation',            { method: 'POST', body: JSON.stringify(body) }),
   dartCompanySearch:(body)  => apiFetch('/api/dart/company-search',         { method: 'POST', body: JSON.stringify(body) }),
@@ -75,4 +76,8 @@ export const api = {
   dartFinancialAnalysis: (body) => apiFetch('/api/dart/financial-analysis', { method: 'POST', body: JSON.stringify(body) }),
   taxSample:        ()      => apiFetch('/api/tax/sample'),
   taxSimulate:      (body)  => apiFetch('/api/tax/simulate',               { method: 'POST', body: JSON.stringify(body) }),
+  quantLeanList:    ()      => apiFetch('/api/quant/lean'),
+  quantLean:        (symbol) => apiFetch(`/api/quant/lean/${encodeURIComponent(symbol)}`),
+  llmBenchStatus:   ()      => apiFetch('/api/llm-bench/status'),
+  llmBenchChat:     (body)  => apiFetch('/api/llm-bench/chat',              { method: 'POST', body: JSON.stringify(body) }),
 };

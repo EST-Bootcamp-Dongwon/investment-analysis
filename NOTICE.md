@@ -9,12 +9,25 @@
 | --- | --- |
 | 원본 저장소 | <https://github.com/edumgt/investment-analysis> |
 | 최초 반영 기준 커밋 | `4b2f198` (2026-07-27) — `_단원안내.md` 기록 |
-| 최근 반영한 원본 커밋 | `6fcbb04` (`Recreate Docker Hub publish workflow configuration`, 2026-08-07) |
+| 최근 반영한 원본 커밋 | `2cb9b7f` (`feat: llms.txt 파일 추가 및 투자 분석 웹앱 설명 작성`) — 2026-09-15 **스냅샷**으로 반영 |
+| 직전 반영한 원본 커밋 | `6fcbb04` (`Recreate Docker Hub publish workflow configuration`) — 2026-08-07 merge 로 반영 |
 | 저작자 | 강사님 / edumgt |
 | 사용 허가 | 수업 중 구두로 **자유로운 사용·수정·개인 프로젝트화**를 허가받았습니다. |
 
 원본 최신본은 원격 `upstream`(위 주소)에서 직접 받습니다. 이 저장소에는 원본 미러
 브랜치를 따로 두지 않았습니다.
+
+### 2026-09-15 반영 방식 — 스냅샷 커밋
+
+- **원본 이력 재작성**: 강사님이 2026-09-02 `f5a7262 Restore repository from local working tree` 로 새 루트 커밋부터
+  이력을 다시 만들어서, 원본 최신 이력과 이 저장소 사이에 공통 조상이 없습니다.
+- **반영 계산**: 직전 반영본 `6fcbb04` 를 기준(merge base)으로 3-way merge 해 강사님 변경은 받고 내 변경만 다시 얹었습니다.
+- **이력은 가져오지 않음**: 원본의 새 이력(2026-09-04 커밋들)에 수강생 실명·시험 점수·답안 유사도·제출자 명단이 담긴
+  채점 결과물(`6-1-rst/`, `6-2-rst/`)이 들어 있습니다. 원본 커밋을 부모로 삼으면 파일을 빼도 그 이력이 Public 저장소에 함께
+  올라가므로, **결과 트리만 담은 단일 부모 커밋(스냅샷)** 으로 반영했습니다. 두 폴더는 트리에서도 뺐고 `.gitignore` 로 막았습니다.
+- **다음 반영 때**: 공통 조상이 계속 없으므로 이번 반영 기준인 `2cb9b7f` 를 merge base 로 지정해 계산합니다
+  (예: `git merge-recursive 2cb9b7f -- HEAD upstream/main`). 새 이력에 개인정보가 남아 있으면 이번처럼 스냅샷으로 커밋합니다.
+- 옛 원본 이력(`6fcbb04` 까지)은 이 저장소에 그대로 남아 있습니다.
 
 ## 라이선스에 관한 중요한 안내
 
@@ -28,8 +41,8 @@
 
 ## 원본 대비 내가 작업한 것
 
-전체 579커밋 중 **내 커밋은 17개**입니다. 원본 코드는 배포 설정 위주로 손댔고,
-나머지는 대부분 추가입니다.
+merge 커밋을 빼면 2026-09-15 이전 **내 커밋은 12개**입니다. 원본 코드는 배포 설정과 로컬 실행 결함 수정 위주로 손댔고,
+나머지는 대부분 추가와 이전 강의 자료 보존입니다. (증감은 원본 최신 `2cb9b7f` 기준)
 
 | 파일 | 증감 | 내용 |
 | --- | --- | --- |
@@ -37,13 +50,31 @@
 | `scripts/deploy-from-wsl.sh` | 신규 +51 | WSL 에서 수동 배포하는 스크립트 |
 | `.gitattributes` | 신규 +37 | Windows·WSL 병행 작업을 위한 줄바꿈(LF) 고정 |
 | `.github/workflows/deploy.yml` | +32 / -16 | 자동 실행 차단(수동 전용) · 배포 이미지 지정을 `.env` 방식으로 교체 |
-| `app/backend/routers/quant.py` | +24 | 누락 import·헬퍼 보강 — `/api/quant/*` 5개 엔드포인트 500 해소 |
-| `.github/workflows/deploy-stock-trade.yml` | +19 / -39 | 배포가 강사님 원본 대신 **내 작업본**을 올리도록 수정 |
-| `readme.md` | +12 | 저장소 안내 블록(출처·사용 권한·이관 안내) |
-| `.gitignore` | +7 / -1 | 개인 작업 메모(`todo.md`)를 추적 대상에서 제외 |
+| `app/backend/routers/quant.py` | +24 | 누락 import·헬퍼 보강 — `/api/quant/*` 5개 엔드포인트 500 해소 (원본에는 아직 없음) |
+| `.github/workflows/deploy-stock-trade.yml` | +20 / -63 | 배포가 강사님 원본 대신 **내 작업본**을 올리도록 수정 · 강사님 서버 전용 설정(도메인·HTTPS·사설 IP DB·`repository_dispatch` 자동 트리거)은 받지 않음 |
+| `readme.md` | +14 | 저장소 안내 블록(출처·사용 권한·이관 안내·보존 자료 위치) |
+| `.gitignore` | +14 | 개인 작업 메모(`todo.md`)·원자료 폴더(`DATA-ROOT/`)·수강생 채점 결과물(`6-*-rst/`) 제외 |
+| `Dockerfile` | +2 | 삼성전기 LEAN 결과(`samsung-em-results/`)를 이미지에 복사 — Quant 메뉴 삼성전기 탭 404 해소 (2026-09-15) |
+| `requirements.txt` | +1 / -1 | `opencv-python` → `opencv-python-headless` — slim 이미지에 GUI 라이브러리가 없어 OpenCV 실습 API 가 500 이던 문제 해소 (2026-09-15) |
 | `docker-compose.prod.yml` | +4 / -1 | 배포 이미지 태그를 `.env` 에서 참조 |
 
-합계 257줄 추가, 57줄 삭제. 변경 내역 전체는 다음으로 확인할 수 있습니다.
+### 원본에서 받지 않은 것 (2026-09-15)
+
+| 위치 | 이유 |
+| --- | --- |
+| `6-1-rst/`, `6-2-rst/` | 수강생 실명·점수·오답·답안 유사도·제출자 명단이 담긴 채점 결과물. Public 저장소에 다시 게시하지 않는다. 원본은 모노레포 `learning/th01-investment-analysis/lecture/` 에서 볼 수 있다 |
+
+### 보존한 이전 강의 자료 (2026-09-15)
+
+강사님 최신본에서 빠진 자료도 **지우지 않고 남겼습니다.**
+
+| 위치 | 증감 | 내용 |
+| --- | --- | --- |
+| `docs/10.md` | 보존 +147 | 「법인과 회사 구조 이해하기」 — 원본은 `10-1`·`10-2`·`10-3` 으로 나눠 다시 썼고 이 파일은 삭제했다. 앱 메뉴·Meilisearch 검색에는 나오지 않지만 Qdrant 문서 검색 색인에는 포함된다 |
+| `test/` 8개 | 보존 +557 · 이미지 1 | `0101`~`0401` 실습 코드와 `industry_prices.csv`·`industry_price_return.png` |
+| `_archive/2026-09-15-before-upstream-sync/` | 신규 | 원본이 내용을 줄이거나 재구성한 문서 7개와 학습 화면 코드(`learn.js`)의 반영 직전 원문 — [설명](_archive/2026-09-15-before-upstream-sync/README.md) |
+
+변경 내역 전체는 다음으로 확인할 수 있습니다.
 
 ```bash
 git diff upstream/main main --stat

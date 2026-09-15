@@ -17,6 +17,55 @@ const MARKETS = [
 
 const QUOTED_MARKETS = MARKETS.filter((market) => ['us', 'uk', 'in', 'cn', 'jp', 'kr', 'tw', 'hk'].includes(market.id));
 
+const US_INDEX_CHARTS = [
+  { id: 'nasdaq', name: '나스닥 종합지수', ticker: '^IXIC', color: '#0f766e' },
+  { id: 'sp500', name: 'S&P 500', ticker: '^GSPC', color: '#d97706' },
+  { id: 'dow', name: '다우존스 산업평균', ticker: '^DJI', color: '#7c3aed' },
+];
+const CHART_PERIODS = [['1mo', '1M'], ['3mo', '3M'], ['6mo', '6M'], ['1y', '1Y']];
+const CHART_UPWARD_COLOR = '#e11d48';
+const CHART_DOWNWARD_COLOR = '#2563eb';
+
+// point.c 등이 null/undefined이면 Number(null)이 0으로 변환되어 finite 판정을 통과해
+// 버리는 문제가 있어, 실제로 숫자 타입인지까지 확인한다.
+function isFiniteOhlcValue(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+// 원인별로 사용자가 이해할 수 있는 한국어 설명을 붙인다.
+function describeChartError(error) {
+  const message = error?.message || '알 수 없는 오류';
+  if (message.startsWith('HTTP ')) return `서버에서 시세를 받아오지 못했습니다(${message}). 잠시 후 다시 시도해 주세요.`;
+  if (message === '데이터 없음') return '선택한 기간에는 표시할 시세 데이터가 없습니다. 다른 기간을 선택해 보세요.';
+  return `차트를 그리는 중 예상하지 못한 오류가 발생했습니다. 최근 시세에 결측값이 있을 수 있습니다. (${message})`;
+}
+
+function indexChartCard(idx) {
+  return `
+    <section class="home-market-card" data-idx-card="${idx.id}">
+      <header class="home-market-card-head">
+        <div>
+          <div class="home-market-name">${idx.name} <span>· ${idx.ticker}</span></div>
+          <div class="home-market-price-row">
+            <strong data-idx-price="${idx.id}">--</strong>
+            <em data-idx-change="${idx.id}">--</em>
+          </div>
+        </div>
+        <div class="home-market-periods" data-idx-periods="${idx.id}">
+          ${CHART_PERIODS.map(([value, label]) => `<button type="button" data-period="${value}" class="${value === '3mo' ? 'active' : ''}">${label}</button>`).join('')}
+        </div>
+      </header>
+      <div class="home-market-chart-wrap">
+        <div class="home-market-chart" data-idx-chart="${idx.id}"></div>
+        <div class="home-market-loading" data-idx-loading="${idx.id}"><i class="fa-solid fa-spinner fa-spin"></i> 데이터 불러오는 중…</div>
+      </div>
+      <footer class="home-market-foot">
+        <span><i class="fa-solid fa-chart-line"></i> 일봉 · MA20 · 거래량</span>
+        <span data-idx-source="${idx.id}"></span>
+      </footer>
+    </section>`;
+}
+
 function marketCap(value) {
   return `$${value.toFixed(1)}조`;
 }
@@ -79,6 +128,10 @@ export function worldMarketsView(container) {
         <div class="world-market-panel-head"><div><h2>대표 지수 현황</h2><p>지수는 외부 시세 공급자 기준이며 시장이 닫힌 경우 마지막 거래가를 표시합니다.</p></div><span id="world-markets-quote-count">시세 연결 중</span></div>
         <div class="world-market-list">${QUOTED_MARKETS.map((market) => `<article class="world-market-row" id="world-market-row-${market.id}"><span class="world-market-dot" style="--market-color:${market.color}"></span><div><strong>${market.country}</strong><small>${market.exchange} · ${market.index}</small></div><b>${marketCap(market.cap)}</b><div id="world-market-quote-${market.id}">${quoteMarkup(market)}</div></article>`).join('')}</div>
       </section>
+      <section class="world-market-panel world-market-index-panel">
+        <div class="world-market-panel-head"><div><h2>미국 3대 지수 차트</h2><p>나스닥 종합지수·S&amp;P 500·다우존스 산업평균의 일봉 캔들·20일 이동평균·거래량입니다.</p></div><span>Yahoo Finance · 15분 지연</span></div>
+        <div class="world-market-index-grid">${US_INDEX_CHARTS.map(indexChartCard).join('')}</div>
+      </section>
       <p class="world-markets-note">시장 규모는 비교 편의를 위해 USD로 환산한 최근 연간 공개 통계의 반올림 참고값입니다. 서로 다른 거래소의 중복상장·환율 변동에 따라 실제 합계와 차이가 날 수 있으며, 투자 권유 목적의 정보가 아닙니다.</p>
     </section>`;
 
@@ -86,6 +139,97 @@ export function worldMarketsView(container) {
   let disposed = false;
   let loading = false;
   chart.render();
+
+  const idxCharts = new Map();
+  const idxPeriods = new Map(US_INDEX_CHARTS.map((idx) => [idx.id, '3mo']));
+
+  function destroyIdxChart(id) {
+    const idxChart = idxCharts.get(id);
+    if (idxChart) {
+      try { idxChart.destroy(); } catch {}
+      idxCharts.delete(id);
+    }
+  }
+
+  async function loadIndexChart(idx) {
+    const id = idx.id;
+    const card = container.querySelector(`[data-idx-card="${id}"]`);
+    const chartEl = card.querySelector(`[data-idx-chart="${id}"]`);
+    const loadingEl = card.querySelector(`[data-idx-loading="${id}"]`);
+    const price = card.querySelector(`[data-idx-price="${id}"]`);
+    const change = card.querySelector(`[data-idx-change="${id}"]`);
+    const source = card.querySelector(`[data-idx-source="${id}"]`);
+    loadingEl.style.display = 'flex';
+    loadingEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 데이터 불러오는 중…';
+    destroyIdxChart(id);
+
+    try {
+      const response = await fetch(`/api/home/market-candle?market=${encodeURIComponent(id)}&period=${idxPeriods.get(id)}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      const ohlcv = (data.ohlcv || []).filter((point) => [point?.o, point?.h, point?.l, point?.c].every(isFiniteOhlcValue));
+      if (!ohlcv.length) throw new Error('데이터 없음');
+
+      const last = ohlcv.at(-1);
+      const previousClose = ohlcv.length > 1 ? ohlcv.at(-2).c : last.o;
+      const changePercent = ((last.c / previousClose) - 1) * 100;
+      const isUp = changePercent >= 0;
+      price.textContent = last.c.toLocaleString(undefined, { maximumFractionDigits: 2 });
+      change.textContent = `${isUp ? '▲' : '▼'} ${Math.abs(changePercent).toFixed(2)}%`;
+      change.className = isUp ? 'is-up' : 'is-down';
+      source.textContent = data.is_simulated ? '시뮬레이션 데이터' : 'Yahoo Finance · 15분 지연';
+      source.classList.toggle('is-simulated', Boolean(data.is_simulated));
+
+      // 백엔드가 MA20 계산용으로 표시 기간보다 앞선 봉을 함께 내려주므로, 이동평균은
+      // 전체 구간으로 계산한 뒤 실제 표시 구간(display_from 이후)만 잘라서 보여준다.
+      const ma20Full = ohlcv.map((point, index) => ({
+        x: new Date(point.date).getTime(),
+        y: index < 19 ? null : ohlcv.slice(index - 19, index + 1).reduce((sum, item) => sum + item.c, 0) / 20,
+      }));
+      const displayFrom = data.display_from || null;
+      const startIdx = displayFrom ? Math.max(0, ohlcv.findIndex((point) => point.date >= displayFrom)) : 0;
+      const displayOhlcv = startIdx > 0 ? ohlcv.slice(startIdx) : ohlcv;
+      const candles = displayOhlcv.map((point) => ({ x: new Date(point.date).getTime(), y: [point.o, point.h, point.l, point.c] }));
+      const ma20 = startIdx > 0 ? ma20Full.slice(startIdx) : ma20Full;
+      const volume = displayOhlcv.map((point) => ({
+        x: new Date(point.date).getTime(), y: point.v || 0,
+        fillColor: point.c >= point.o ? CHART_UPWARD_COLOR : CHART_DOWNWARD_COLOR,
+      }));
+
+      const idxChart = new ApexCharts(chartEl, {
+        chart: { type: 'candlestick', height: 250, toolbar: { show: false }, zoom: { enabled: false }, animations: { enabled: false }, background: '#fff', fontFamily: 'Pretendard, -apple-system, "Malgun Gothic", sans-serif' },
+        series: [
+          { name: idx.name, type: 'candlestick', data: candles },
+          { name: 'MA20', type: 'line', data: ma20 },
+          { name: '거래량', type: 'bar', data: volume },
+        ],
+        plotOptions: { candlestick: { colors: { upward: CHART_UPWARD_COLOR, downward: CHART_DOWNWARD_COLOR }, wick: { useFillColor: true } }, bar: { columnWidth: '65%' } },
+        colors: [CHART_UPWARD_COLOR, idx.color, '#94a3b8'],
+        stroke: { curve: 'smooth', width: [1, 1.7, 0] },
+        xaxis: { type: 'datetime', labels: { format: 'MM-dd', style: { fontSize: '10px', colors: '#94a3b8' }, hideOverlappingLabels: true, datetimeUTC: false }, axisBorder: { show: false }, axisTicks: { show: false } },
+        yaxis: [{ labels: { formatter: (value) => value ? Math.round(value).toLocaleString() : '', style: { fontSize: '10px', colors: '#94a3b8' } } }, { show: false }, { show: false }],
+        grid: { borderColor: '#eef2f7', strokeDashArray: 3, padding: { right: 10, left: 4 } },
+        tooltip: { shared: false, x: { format: 'yyyy-MM-dd' }, y: { formatter: (value) => value == null ? '' : Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 }) } },
+        legend: { show: false },
+      });
+      idxCharts.set(id, idxChart);
+      await idxChart.render();
+      loadingEl.style.display = 'none';
+    } catch (error) {
+      loadingEl.innerHTML = `<span class="home-market-error">데이터 오류: ${describeChartError(error)}</span>`;
+    }
+  }
+
+  US_INDEX_CHARTS.forEach((idx) => {
+    container.querySelector(`[data-idx-periods="${idx.id}"]`).addEventListener('click', (event) => {
+      const button = event.target.closest('[data-period]');
+      if (!button) return;
+      idxPeriods.set(idx.id, button.dataset.period);
+      container.querySelectorAll(`[data-idx-periods="${idx.id}"] [data-period]`).forEach((item) => item.classList.toggle('active', item === button));
+      loadIndexChart(idx);
+    });
+    loadIndexChart(idx);
+  });
 
   function highlightMarket(id) {
     container.querySelectorAll('.world-market-row, .world-market-marker').forEach((element) => element.classList.remove('is-selected'));
@@ -126,5 +270,10 @@ export function worldMarketsView(container) {
   container.querySelector('#world-markets-refresh').addEventListener('click', loadQuotes);
   loadQuotes();
   const refreshTimer = window.setInterval(loadQuotes, 60_000);
-  window._viewCleanup = () => { disposed = true; window.clearInterval(refreshTimer); try { chart.destroy(); } catch {} };
+  window._viewCleanup = () => {
+    disposed = true;
+    window.clearInterval(refreshTimer);
+    try { chart.destroy(); } catch {}
+    idxCharts.forEach((idxChart) => { try { idxChart.destroy(); } catch {} });
+  };
 }

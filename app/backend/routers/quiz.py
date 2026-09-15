@@ -16,7 +16,7 @@ except ImportError:  # Supports importing through `uvicorn main:app`.
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 QUIZ_SQL_PATH = ROOT_DIR / 'app' / 'backend' / 'quiz_seed.sql'
-QUIZ_SEED_VERSION = 'stock-learning-2026-08-01-v1'
+QUIZ_SEED_VERSION = 'stock-learning-2026-08-29-v2'
 QUIZ_SEED_META_ID = 'quiz_seed_version'
 router = APIRouter()
 

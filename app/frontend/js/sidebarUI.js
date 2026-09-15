@@ -4,7 +4,7 @@
  */
 const DESKTOP_BREAKPOINT = 1024;
 let _sidebarOpen = window.innerWidth > DESKTOP_BREAKPOINT;
-const MENU_SECTION_ORDER = ['learn', 'review', 'quiz', 'visualization'];
+const MENU_SECTION_ORDER = ['review', 'learn', 'quiz', 'visualization', 'portfolio', 'quant'];
 
 // SPA와 정적 페이지가 같은 메뉴 순서를 유지하도록 실제 DOM 순서를 맞춘다.
 function orderSidebarSections() {
@@ -20,6 +20,12 @@ function orderSidebarSections() {
   MENU_SECTION_ORDER.forEach((id) => {
     const section = sections.get(id);
     if (section) nav.append(section);
+  });
+
+  // RAG는 보조 기능이므로 모든 학습·분석 메뉴 다음에 두고, LLM 서빙 비교는 그 아래 맨 마지막에 둔다.
+  ['rag-chat', 'llm-bench'].forEach((view) => {
+    const item = nav.querySelector(`:scope > .nav-item[data-view="${view}"]`);
+    if (item) nav.append(item);
   });
 }
 window._orderSidebarSections = orderSidebarSections;
@@ -52,7 +58,19 @@ function ensureSidebarChatbot() {
   const close = document.getElementById('floating-chatbot-close');
   const form = document.getElementById('floating-chatbot-form');
   const input = document.getElementById('floating-chatbot-input');
+  const submit = form?.querySelector('button[type="submit"]');
   const messages = document.getElementById('floating-chatbot-messages');
+  const sessionKey = 'investment_analysis_lex_session_id';
+  const makeSessionId = () => `web-${window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+  let sessionId = localStorage.getItem(sessionKey) || makeSessionId();
+  localStorage.setItem(sessionKey, sessionId);
+  const appendMessage = (text, className) => {
+    const message = document.createElement('p');
+    message.className = `floating-chatbot-message ${className}`;
+    message.textContent = text;
+    messages?.append(message);
+    messages?.scrollTo({ top: messages.scrollHeight, behavior: 'smooth' });
+  };
   const setOpen = (open) => {
     panel.hidden = !open;
     trigger.setAttribute('aria-expanded', String(open));
@@ -62,19 +80,33 @@ function ensureSidebarChatbot() {
   trigger?.addEventListener('click', () => setOpen(panel.hidden));
   close?.addEventListener('click', () => setOpen(false));
 
-  form?.addEventListener('submit', (event) => {
+  form?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const question = input?.value.trim();
     if (!question || !messages) return;
 
-    const userMessage = document.createElement('p');
-    userMessage.className = 'floating-chatbot-message is-user';
-    userMessage.textContent = question;
-    const enterpriseMessage = document.createElement('p');
-    enterpriseMessage.className = 'floating-chatbot-message is-enterprise';
-    enterpriseMessage.textContent = 'Enterprise 버전입니다.';
-    messages.replaceChildren(userMessage, enterpriseMessage);
+    appendMessage(question, 'is-user');
     input.value = '';
+    input.disabled = true;
+    if (submit) submit.disabled = true;
+    try {
+      const response = await fetch('/api/lex/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: question, session_id: sessionId }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || '투자 도우미 응답을 받지 못했습니다.');
+      sessionId = payload.session_id || sessionId;
+      localStorage.setItem(sessionKey, sessionId);
+      (payload.messages || []).forEach((message) => appendMessage(message, 'is-enterprise'));
+    } catch (error) {
+      appendMessage(error.message || '투자 도우미 연결에 실패했습니다.', 'is-enterprise');
+    } finally {
+      input.disabled = false;
+      if (submit) submit.disabled = false;
+      input.focus();
+    }
   });
 }
 window._ensureSidebarChatbot = ensureSidebarChatbot;
